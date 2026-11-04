@@ -13,7 +13,9 @@ How do per-student throughput and fairness degrade as more students join one AP,
 
 ## Current state
 
-`classroom-wifi.cc` is still an unmodified copy of ns-3's `examples/wireless/wifi-he-network.cc`. It only reports total throughput, only does Wi-Fi 6, and uses a fixed MCS. Per-student measurement and the Wi-Fi 5 comparison aren't in yet.
+`classroom-wifi.cc` started as a copy of ns-3's `examples/wireless/wifi-he-network.cc` and now runs one configuration per execution. It supports 802.11ax and 802.11ac on 5 GHz, measures each student's throughput with FlowMonitor, computes Jain's fairness index, and can move one student far from the AP.
+
+OFDMA is not enabled, so Wi-Fi 6 runs are single-user only.
 
 ## Setup
 
@@ -36,18 +38,47 @@ Copy the script into ns-3's `scratch/` folder, then run it from `~/ns-3`:
 ```sh
 cp classroom-wifi.cc ~/ns-3/scratch/
 cd ~/ns-3
-./ns3 run "classroom-wifi --nStations=30 --mcs=5 --channelWidth=20 --guardInterval=800 --simulationTime=2s"
+./ns3 run "classroom-wifi --standard=ax --nStations=30 --mcs=5 --channelWidth=20 --guardInterval=800 --simulationTime=2s"
 ```
 
-That's downlink (AP sending to students). Add `--downlink=0` for uplink (students sending to the AP).
-
 Re-copy the file into `scratch/` every time you change it.
+
+Options:
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--standard` | `ax` | `ax` (Wi-Fi 6) or `ac` (Wi-Fi 5) |
+| `--nStations` | `1` | number of students |
+| `--downlink` | `1` | `1` = AP sends to students, `0` = students send to AP |
+| `--udp` | `1` | `1` = UDP, `0` = TCP |
+| `--rateManager` | `constant` | `constant` (fixed `--mcs`), `minstrel` or `ideal` |
+| `--mcs` | `5` | MCS for the constant rate manager (ax: 0-11, ac: 0-9) |
+| `--channelWidth` | `20` | MHz: 20, 40, 80 or 160 |
+| `--guardInterval` | `800` | ns. ax: 800/1600/3200, ac: 400/800 |
+| `--distance` | `1` | meters from each student to the AP |
+| `--farDistance` | `0` | if set, one student sits this far away instead |
+| `--simulationTime` | `10s` | simulated time |
+| `--csv` | `results/runs.csv` | summary row is appended here |
+| `--perStudentCsv` | `results/per-student.csv` | one row per student is appended here |
+
+Relative CSV paths are relative to where you run `./ns3` (so `~/ns-3/results/` by default). Pass full paths to write into this repo.
+
+For the far-student test, use `--rateManager=ideal` or `minstrel`. With a fixed MCS the far student can't drop to a slower rate. On the default channel model a student past about 50 m is out of range, and the whole network stalls.
+
+## Sweep
+
+```sh
+./sweep.sh
+```
+
+Runs 5, 10, 20, 30, 40 and 50 students for both standards and both directions (24 runs, fixed seed). Results are appended to `results/runs.csv` and `results/per-student.csv`. It expects ns-3 at `~/ns-3`. Set `NS3_DIR` or `SIM_TIME` to change that.
 
 ## Layout
 
 ```
 classroom-wifi.cc   simulation script (copy into ~/ns-3/scratch/ to run)
-results/            recorded results, one markdown file per set of runs
+sweep.sh            runs the main student-count sweep
+results/            recorded results
 ```
 
 See `results/baseline.md` for the first numbers.
