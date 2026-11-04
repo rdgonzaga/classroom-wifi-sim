@@ -17,6 +17,8 @@ How do per-student throughput and fairness degrade as more students join one AP,
 
 OFDMA is off by default. It can be turned on with `--ofdma` (downlink) and `--ulOfdma` (uplink).
 
+Traffic is saturated by default (every student sends or receives as fast as possible). With `--demand` each student asks for a fixed rate instead, and the output shows how much of it each student actually received.
+
 ## Setup
 
 We use ns-3.48 on Ubuntu (WSL works fine).
@@ -51,6 +53,7 @@ Options:
 | `--nStations` | `1` | number of students |
 | `--downlink` | `1` | `1` = AP sends to students, `0` = students send to AP |
 | `--udp` | `1` | `1` = UDP, `0` = TCP |
+| `--demand` | `0` | Mbit/s each student asks for. `0` = saturated |
 | `--rateManager` | `constant` | `constant` (fixed `--mcs`), `minstrel` or `ideal` |
 | `--mcs` | `5` | MCS for the constant rate manager (ax: 0-11, ac: 0-9) |
 | `--channelWidth` | `20` | MHz: 20, 40, 80 or 160 |
@@ -75,7 +78,13 @@ For the far-student test, use `--rateManager=ideal` or `minstrel`. With a fixed 
 ./sweep.sh
 ```
 
-Runs 5, 10, 20, 30, 40 and 50 students for both standards and both directions, plus Wi-Fi 6 downlink with OFDMA. That's 30 settings, each run 5 times with `--RngRun=1` to `5` (150 runs). Uplink results change noticeably from run to run because of random collisions, so average the 5 runs (the `run` column in the CSV) instead of using a single one. Set `RUNS` to change the number of runs. Results are appended to `results/runs.csv` and `results/per-student.csv`. It expects ns-3 at `~/ns-3`. Set `NS3_DIR` or `SIM_TIME` to change that.
+Runs 5, 10, 20, 30, 40 and 50 students for both standards and both directions, plus Wi-Fi 6 downlink with OFDMA. That's 30 settings, each run 5 times with `--RngRun=1` to `5` (150 runs). Uplink results change noticeably from run to run because of random collisions, so average the 5 runs (the `run` column in the CSV) instead of using a single one. Set `RUNS` to change the number of runs. Results are appended to `results/runs.csv` and `results/per-student.csv`. It expects ns-3 at `~/ns-3`. Set `NS3_DIR` to change that and `SIM_TIME` to change the run length.
+
+`DEMAND` sets `--demand` for every run (default `0`, saturated) and `STUDENTS` sets the student counts. For example, the runs in `results/demand.md`:
+
+```sh
+DEMAND=3 SIM_TIME=2s RUNS=3 STUDENTS="5 10 15 20 25 30 35 40 45 50" ./sweep.sh
+```
 
 ## Layout
 
@@ -91,3 +100,4 @@ Results so far:
 - `results/baseline.md`: the unmodified example's numbers
 - `results/first-runs.md`: test runs of the experiment script (baseline check, Wi-Fi 6 vs 5, far student)
 - `results/ofdma.md`: test runs with OFDMA on
+- `results/demand.md`: fixed demand per student, how many students one AP can serve (sub-question 1)

@@ -10,7 +10,8 @@
 // the crowded classroom study.
 //
 // One AP and nStations students on 5 GHz, using 802.11ax or 802.11ac. Each student has one
-// saturated UDP (or TCP) flow. Runs one configuration and appends the results to --csv and
+// UDP (or TCP) flow. By default the flows are saturated. With --demand each student asks for a
+// fixed rate instead. Runs one configuration and appends the results to --csv and
 // --perStudentCsv.
 //
 // Students sit in a circle at --distance meters from the AP. If --farDistance is set, the last
@@ -64,7 +65,9 @@ OpenCsv(const std::string& path, const std::string& header)
     {
         std::filesystem::create_directories(parent);
     }
-    bool isNew = !std::filesystem::exists(path) || std::filesystem::file_size(path) == 0;
+    // only regular files get a header, so /dev/null works too
+    bool isNew = !std::filesystem::exists(path) || (std::filesystem::is_regular_file(path) &&
+                                                     std::filesystem::file_size(path) == 0);
     std::ofstream file(path, std::ios::app);
     if (!file)
     {
@@ -92,6 +95,7 @@ main(int argc, char* argv[])
     double distance{1.0};    // meters
     double farDistance{0.0}; // meters, 0 means no far student
     std::size_t nStations{1};
+    double demand{0.0}; // Mbit/s per student, 0 means saturated
     int mcs{5};
     int channelWidth{20};  // MHz
     int guardInterval{800}; // ns
@@ -120,6 +124,9 @@ main(int argc, char* argv[])
     cmd.AddValue("farDistance",
                  "If set, one student is placed this many meters from the AP instead",
                  farDistance);
+    cmd.AddValue("demand",
+                 "Offered load per student in Mbit/s (application payload). 0 means saturated",
+                 demand);
     cmd.AddValue("simulationTime", "Simulation time", simulationTime);
     cmd.AddValue("udp", "UDP if set to 1, TCP otherwise", udp);
     cmd.AddValue("downlink",
@@ -195,6 +202,10 @@ main(int argc, char* argv[])
     {
         NS_FATAL_ERROR("farDistance can't be negative");
     }
+    if (demand < 0)
+    {
+        NS_FATAL_ERROR("demand can't be negative");
+    }
 
     // e.g. VHT MCS 9 isn't allowed at 20 MHz with 1 stream
     auto getMode = [isAx](int m) { return isAx ? HePhy::GetHeMcs(m) : VhtPhy::GetVhtMcs(m); };
@@ -205,8 +216,8 @@ main(int argc, char* argv[])
                               << standard);
     }
 
-    // load per student = PHY rate / nStations like the original. minstrel/ideal can go above
-    // --mcs, so use the highest MCS there so the channel stays saturated
+    // saturated load per student = PHY rate / nStations like the original. minstrel/ideal can go
+    // above --mcs, so use the highest MCS there so the channel stays saturated
     int loadMcs = mcs;
     if (rateManager != "constant")
     {
@@ -219,7 +230,9 @@ main(int argc, char* argv[])
     const uint64_t phyRate =
         isAx ? HePhy::GetDataRate(loadMcs, width, NanoSeconds(guardInterval), 1)
              : VhtPhy::GetDataRate(loadMcs, width, NanoSeconds(guardInterval), 1);
-    const auto maxLoad = phyRate / nStations;
+    // with --demand every student asks for the same fixed rate
+    const auto maxLoad =
+        demand > 0 ? static_cast<uint64_t>(demand * 1e6) : phyRate / nStations;
 
     if (!udp)
     {
@@ -509,6 +522,9 @@ main(int argc, char* argv[])
     double mean = total / nStations;
     // Jain's index: 1 = perfectly fair, 1/n = one student gets everything
     double jain = sumSquares > 0 ? (total * total) / (nStations * sumSquares) : 0;
+    // share of the demand each student actually got (only with --demand)
+    double meanSatisfaction = demand > 0 ? mean / demand : 0;
+    double minSatisfaction = demand > 0 ? minThroughput / demand : 0;
 
     const std::string direction = downlink ? "downlink" : "uplink";
     const uint64_t run = RngSeedManager::GetRun();
@@ -521,8 +537,16 @@ main(int argc, char* argv[])
         std::cout << " (MCS " << mcs << ")";
     }
     std::cout << ", " << channelWidth << " MHz, " << guardInterval << " ns GI, "
-              << (udp ? "UDP" : "TCP") << ", OFDMA " << ofdmaStr << ", " << phyModel << ", "
-              << simulationTime.As(Time::S) << ", run " << run << '\n';
+              << (udp ? "UDP" : "TCP") << ", OFDMA " << ofdmaStr << ", " << phyModel << ", ";
+    if (demand > 0)
+    {
+        std::cout << "demand " << demand << " Mbit/s, ";
+    }
+    else
+    {
+        std::cout << "saturated, ";
+    }
+    std::cout << simulationTime.As(Time::S) << ", run " << run << '\n';
     for (std::size_t i = 0; i < nStations; i++)
     {
         std::cout << "  Student " << i + 1 << " (" << staDistances[i]
@@ -532,24 +556,31 @@ main(int argc, char* argv[])
               << "Mean per student: " << mean << " Mbit/s\n"
               << "Min per student: " << minThroughput << " Mbit/s\n"
               << "Jain's fairness index: " << jain << std::endl;
+    if (demand > 0)
+    {
+        std::cout << "Delivered / demand (mean): " << meanSatisfaction << '\n'
+                  << "Delivered / demand (worst student): " << minSatisfaction << std::endl;
+    }
 
     auto csv = OpenCsv(csvPath,
                        "standard,nStations,direction,rateManager,farDistance,totalMbps,meanMbps,"
                        "minMbps,jain,mcs,channelWidth,guardInterval,distance,udp,simulationTime,run,"
-                       "ofdma,phyModel");
+                       "ofdma,phyModel,demand,meanSatisfaction,minSatisfaction");
     csv << standard << ',' << nStations << ',' << direction << ',' << rateManager << ','
         << farDistance << ',' << total << ',' << mean << ',' << minThroughput << ',' << jain << ','
         << mcs << ',' << channelWidth << ',' << guardInterval << ',' << distance << ',' << udp << ','
-        << simulationTime.GetSeconds() << ',' << run << ',' << ofdmaStr << ',' << phyModel << '\n';
+        << simulationTime.GetSeconds() << ',' << run << ',' << ofdmaStr << ',' << phyModel << ','
+        << demand << ',' << meanSatisfaction << ',' << minSatisfaction << '\n';
 
     auto perStudentCsv = OpenCsv(perStudentCsvPath,
                                  "standard,nStations,direction,rateManager,farDistance,mcs,ofdma,"
-                                 "run,student,studentDistance,throughputMbps");
+                                 "run,student,studentDistance,throughputMbps,demand,satisfaction");
     for (std::size_t i = 0; i < nStations; i++)
     {
         perStudentCsv << standard << ',' << nStations << ',' << direction << ',' << rateManager
                       << ',' << farDistance << ',' << mcs << ',' << ofdmaStr << ',' << run << ','
-                      << i + 1 << ',' << staDistances[i] << ',' << perStudent[i] << '\n';
+                      << i + 1 << ',' << staDistances[i] << ',' << perStudent[i] << ',' << demand
+                      << ',' << (demand > 0 ? perStudent[i] / demand : 0) << '\n';
     }
 
     return 0;

@@ -3,12 +3,15 @@
 # Each setting is run RUNS times with a different --RngRun, so results can be averaged.
 # Results get appended to results/runs.csv and results/per-student.csv.
 # Set NS3_DIR if ns-3 isn't at ~/ns-3, SIM_TIME to change the run length, RUNS for the
-# number of runs per setting.
+# number of runs per setting, DEMAND for a fixed load per student in Mbit/s (0 = saturated),
+# STUDENTS for the list of student counts.
 set -e
 
 NS3_DIR=${NS3_DIR:-$HOME/ns-3}
 SIM_TIME=${SIM_TIME:-10s}
 RUNS=${RUNS:-5}
+DEMAND=${DEMAND:-0}
+STUDENTS=${STUDENTS:-"5 10 20 30 40 50"}
 REPO_DIR=$(cd "$(dirname "$0")" && pwd)
 OUT_DIR=${OUT_DIR:-$REPO_DIR/results}
 
@@ -16,6 +19,7 @@ OUT_DIR=${OUT_DIR:-$REPO_DIR/results}
 SEED=1
 
 COMMON="--mcs=5 --channelWidth=20 --guardInterval=800 --simulationTime=$SIM_TIME --RngSeed=$SEED"
+COMMON="$COMMON --demand=$DEMAND"
 COMMON="$COMMON --csv=$OUT_DIR/runs.csv --perStudentCsv=$OUT_DIR/per-student.csv"
 
 cp "$REPO_DIR/classroom-wifi.cc" "$NS3_DIR/scratch/"
@@ -25,7 +29,7 @@ cd "$NS3_DIR"
 for run in $(seq 1 "$RUNS"); do
     for standard in ax ac; do
         for downlink in 1 0; do
-            for n in 5 10 20 30 40 50; do
+            for n in $STUDENTS; do
                 ./ns3 run --no-build "classroom-wifi --standard=$standard --downlink=$downlink --nStations=$n --RngRun=$run $COMMON" |
                     grep -v "^  Student"
             done
@@ -33,7 +37,7 @@ for run in $(seq 1 "$RUNS"); do
     done
 
     # Wi-Fi 6 with DL OFDMA (UL OFDMA needs a 1600 ns GI, so it's not part of this sweep)
-    for n in 5 10 20 30 40 50; do
+    for n in $STUDENTS; do
         ./ns3 run --no-build "classroom-wifi --standard=ax --downlink=1 --ofdma=1 --nStations=$n --RngRun=$run $COMMON" |
             grep -v "^  Student"
     done
