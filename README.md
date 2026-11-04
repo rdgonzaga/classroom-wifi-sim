@@ -75,7 +75,7 @@ For the far-student test, use `--rateManager=ideal` or `minstrel`. With a fixed 
 ./sweep.sh
 ```
 
-Runs 5, 10, 20, 30, 40 and 50 students for both standards and both directions, plus Wi-Fi 6 downlink with OFDMA (30 runs, fixed seed). Results are appended to `results/runs.csv` and `results/per-student.csv`. It expects ns-3 at `~/ns-3`. Set `NS3_DIR` or `SIM_TIME` to change that.
+Runs 5, 10, 20, 30, 40 and 50 students for both standards and both directions, plus Wi-Fi 6 downlink with OFDMA. That's 30 settings, each run 5 times with `--RngRun=1` to `5` (150 runs). Uplink results change noticeably from run to run because of random collisions, so average the 5 runs (the `run` column in the CSV) instead of using a single one. Set `RUNS` to change the number of runs. Results are appended to `results/runs.csv` and `results/per-student.csv`. It expects ns-3 at `~/ns-3`. Set `NS3_DIR` or `SIM_TIME` to change that.
 
 ## Layout
 
