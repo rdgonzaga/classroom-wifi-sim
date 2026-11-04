@@ -1,0 +1,23 @@
+# build outputs
+build/
+cmake-cache/
+*.o
+*.so
+*.a
+
+# simulation output
+*.pcap
+
+# python
+__pycache__/
+*.pyc
+.venv/
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+desktop.ini
+*:Zone.Identifier
+*~
+*.swp
+.vscode/
