@@ -81,4 +81,7 @@ sweep.sh            runs the main student-count sweep
 results/            recorded results
 ```
 
-See `results/baseline.md` for the first numbers.
+Results so far:
+
+- `results/baseline.md`: the unmodified example's numbers
+- `results/first-runs.md`: test runs of the experiment script (baseline check, Wi-Fi 6 vs 5, far student)
