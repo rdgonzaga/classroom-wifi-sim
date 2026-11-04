@@ -83,6 +83,7 @@ Runs 5, 10, 20, 30, 40 and 50 students for both standards and both directions, p
 classroom-wifi.cc   simulation script (copy into ~/ns-3/scratch/ to run)
 sweep.sh            runs the main student-count sweep
 results/            recorded results
+TIMELINE.md         what has been done so far, in order
 ```
 
 Results so far:
