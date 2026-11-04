@@ -20,6 +20,7 @@
 #include "ns3/command-line.h"
 #include "ns3/config.h"
 #include "ns3/double.h"
+#include "ns3/enum.h"
 #include "ns3/flow-monitor-helper.h"
 #include "ns3/he-phy.h"
 #include "ns3/internet-stack-helper.h"
@@ -28,15 +29,18 @@
 #include "ns3/ipv4-global-routing-helper.h"
 #include "ns3/log.h"
 #include "ns3/mobility-helper.h"
+#include "ns3/multi-model-spectrum-channel.h"
 #include "ns3/neighbor-cache-helper.h"
 #include "ns3/on-off-helper.h"
 #include "ns3/packet-sink-helper.h"
 #include "ns3/rng-seed-manager.h"
+#include "ns3/spectrum-wifi-helper.h"
 #include "ns3/ssid.h"
 #include "ns3/string.h"
 #include "ns3/udp-client-server-helper.h"
 #include "ns3/uinteger.h"
 #include "ns3/vht-phy.h"
+#include "ns3/wifi-acknowledgment.h"
 #include "ns3/wifi-static-setup-helper.h"
 #include "ns3/yans-wifi-channel.h"
 #include "ns3/yans-wifi-helper.h"
@@ -78,6 +82,10 @@ main(int argc, char* argv[])
 {
     std::string standard{"ax"};
     std::string rateManager{"constant"};
+    bool ofdma{false};   // DL OFDMA, 802.11ax only
+    bool ulOfdma{false}; // also UL OFDMA
+    std::string phyModel{"Yans"};
+    Time accessReqInterval{"3ms"};
     bool udp{true};
     bool downlink{true};
     Time simulationTime{"10s"};
@@ -97,6 +105,16 @@ main(int argc, char* argv[])
     cmd.AddValue("rateManager",
                  "Rate control: constant (fixed --mcs), minstrel or ideal",
                  rateManager);
+    cmd.AddValue("ofdma", "Enable DL OFDMA (802.11ax only)", ofdma);
+    cmd.AddValue("ulOfdma",
+                 "Also enable UL OFDMA (802.11ax only, needs guardInterval >= 1600)",
+                 ulOfdma);
+    cmd.AddValue("muSchedAccessReqInterval",
+                 "With UL OFDMA, how often the AP asks for channel access to send triggers",
+                 accessReqInterval);
+    cmd.AddValue("phyModel",
+                 "PHY model: Yans or Spectrum. OFDMA always uses Spectrum",
+                 phyModel);
     cmd.AddValue("nStations", "Number of students (stations)", nStations);
     cmd.AddValue("distance", "Distance in meters between each student and the AP", distance);
     cmd.AddValue("farDistance",
@@ -148,6 +166,27 @@ main(int argc, char* argv[])
         NS_FATAL_ERROR("Invalid rate manager: " << rateManager
                                                 << " (must be constant, minstrel or ideal)");
     }
+    if (phyModel != "Yans" && phyModel != "Spectrum")
+    {
+        NS_FATAL_ERROR("Invalid PHY model: " << phyModel << " (must be Yans or Spectrum)");
+    }
+    if (ulOfdma)
+    {
+        ofdma = true;
+    }
+    if (ofdma && !isAx)
+    {
+        NS_FATAL_ERROR("OFDMA is only available in 802.11ax");
+    }
+    if (ulOfdma && guardInterval < 1600)
+    {
+        NS_FATAL_ERROR("UL OFDMA needs a guard interval of 1600 or 3200 ns");
+    }
+    if (ofdma)
+    {
+        // SpectrumWifiPhy is required for OFDMA
+        phyModel = "Spectrum";
+    }
     if (nStations < 1)
     {
         NS_FATAL_ERROR("Need at least one station");
@@ -185,6 +224,13 @@ main(int argc, char* argv[])
     if (!udp)
     {
         Config::SetDefault("ns3::TcpSocket::SegmentSize", UintegerValue(payloadSize));
+    }
+
+    if (ofdma)
+    {
+        // same as --dlAckType=AGGR-MU-BAR in the original example
+        Config::SetDefault("ns3::WifiDefaultAckManager::DlMuAckSequenceType",
+                           EnumValue(WifiAcknowledgment::DL_MU_AGGREGATE_TF));
     }
 
     NodeContainer wifiStaNodes;
@@ -235,21 +281,68 @@ main(int argc, char* argv[])
 
     Ssid ssid = Ssid("classroom-ap");
 
-    auto channel = YansWifiChannelHelper::Default();
-    YansWifiPhyHelper phy;
-    phy.SetPcapDataLinkType(WifiPhyHelper::DLT_IEEE802_11_RADIO);
-    phy.SetChannel(channel.Create());
+    if (phyModel == "Spectrum")
+    {
+        auto spectrumChannel = CreateObject<MultiModelSpectrumChannel>();
 
-    mac.SetType("ns3::StaWifiMac", "Ssid", SsidValue(ssid), "MpduBufferSize", UintegerValue(64));
-    phy.Set("ChannelSettings", StringValue(channelStr));
-    staDevices = wifi.Install(phy, mac, wifiStaNodes);
+        auto lossModel = CreateObject<LogDistancePropagationLossModel>();
+        spectrumChannel->AddPropagationLossModel(lossModel);
 
-    mac.SetType("ns3::ApWifiMac",
-                "EnableBeaconJitter",
-                BooleanValue(false),
-                "Ssid",
-                SsidValue(ssid));
-    apDevice = wifi.Install(phy, mac, wifiApNode);
+        SpectrumWifiPhyHelper phy;
+        phy.SetPcapDataLinkType(WifiPhyHelper::DLT_IEEE802_11_RADIO);
+        phy.SetChannel(spectrumChannel);
+
+        mac.SetType("ns3::StaWifiMac",
+                    "Ssid",
+                    SsidValue(ssid),
+                    "MpduBufferSize",
+                    UintegerValue(64));
+        phy.Set("ChannelSettings", StringValue(channelStr));
+        staDevices = wifi.Install(phy, mac, wifiStaNodes);
+
+        if (ofdma)
+        {
+            // in uplink the AP has nothing to send, so without an access request interval it
+            // never gets the channel and never sends trigger frames
+            mac.SetMultiUserScheduler("ns3::RrMultiUserScheduler",
+                                      "EnableUlOfdma",
+                                      BooleanValue(ulOfdma),
+                                      "EnableBsrp",
+                                      BooleanValue(ulOfdma),
+                                      "AccessReqInterval",
+                                      TimeValue(ulOfdma ? accessReqInterval : Time{0}));
+        }
+        mac.SetType("ns3::ApWifiMac",
+                    "EnableBeaconJitter",
+                    BooleanValue(false),
+                    "BeaconGeneration",
+                    BooleanValue(false),
+                    "Ssid",
+                    SsidValue(ssid));
+        apDevice = wifi.Install(phy, mac, wifiApNode);
+    }
+    else
+    {
+        auto channel = YansWifiChannelHelper::Default();
+        YansWifiPhyHelper phy;
+        phy.SetPcapDataLinkType(WifiPhyHelper::DLT_IEEE802_11_RADIO);
+        phy.SetChannel(channel.Create());
+
+        mac.SetType("ns3::StaWifiMac",
+                    "Ssid",
+                    SsidValue(ssid),
+                    "MpduBufferSize",
+                    UintegerValue(64));
+        phy.Set("ChannelSettings", StringValue(channelStr));
+        staDevices = wifi.Install(phy, mac, wifiStaNodes);
+
+        mac.SetType("ns3::ApWifiMac",
+                    "EnableBeaconJitter",
+                    BooleanValue(false),
+                    "Ssid",
+                    SsidValue(ssid));
+        apDevice = wifi.Install(phy, mac, wifiApNode);
+    }
 
     int64_t streamNumber = 150;
     streamNumber += WifiHelper::AssignStreams(apDevice, streamNumber);
@@ -419,6 +512,7 @@ main(int argc, char* argv[])
 
     const std::string direction = downlink ? "downlink" : "uplink";
     const uint64_t run = RngSeedManager::GetRun();
+    const std::string ofdmaStr = ulOfdma ? "dl+ul" : (ofdma ? "dl" : "off");
 
     std::cout << "802.11" << standard << ", " << nStations << " students, " << direction
               << ", rate manager: " << rateManager;
@@ -427,8 +521,8 @@ main(int argc, char* argv[])
         std::cout << " (MCS " << mcs << ")";
     }
     std::cout << ", " << channelWidth << " MHz, " << guardInterval << " ns GI, "
-              << (udp ? "UDP" : "TCP") << ", " << simulationTime.As(Time::S) << ", run " << run
-              << '\n';
+              << (udp ? "UDP" : "TCP") << ", OFDMA " << ofdmaStr << ", " << phyModel << ", "
+              << simulationTime.As(Time::S) << ", run " << run << '\n';
     for (std::size_t i = 0; i < nStations; i++)
     {
         std::cout << "  Student " << i + 1 << " (" << staDistances[i]
@@ -441,20 +535,21 @@ main(int argc, char* argv[])
 
     auto csv = OpenCsv(csvPath,
                        "standard,nStations,direction,rateManager,farDistance,totalMbps,meanMbps,"
-                       "minMbps,jain,mcs,channelWidth,guardInterval,distance,udp,simulationTime,run");
+                       "minMbps,jain,mcs,channelWidth,guardInterval,distance,udp,simulationTime,run,"
+                       "ofdma,phyModel");
     csv << standard << ',' << nStations << ',' << direction << ',' << rateManager << ','
         << farDistance << ',' << total << ',' << mean << ',' << minThroughput << ',' << jain << ','
         << mcs << ',' << channelWidth << ',' << guardInterval << ',' << distance << ',' << udp << ','
-        << simulationTime.GetSeconds() << ',' << run << '\n';
+        << simulationTime.GetSeconds() << ',' << run << ',' << ofdmaStr << ',' << phyModel << '\n';
 
     auto perStudentCsv = OpenCsv(perStudentCsvPath,
-                                 "standard,nStations,direction,rateManager,farDistance,mcs,run,"
-                                 "student,studentDistance,throughputMbps");
+                                 "standard,nStations,direction,rateManager,farDistance,mcs,ofdma,"
+                                 "run,student,studentDistance,throughputMbps");
     for (std::size_t i = 0; i < nStations; i++)
     {
         perStudentCsv << standard << ',' << nStations << ',' << direction << ',' << rateManager
-                      << ',' << farDistance << ',' << mcs << ',' << run << ',' << i + 1 << ','
-                      << staDistances[i] << ',' << perStudent[i] << '\n';
+                      << ',' << farDistance << ',' << mcs << ',' << ofdmaStr << ',' << run << ','
+                      << i + 1 << ',' << staDistances[i] << ',' << perStudent[i] << '\n';
     }
 
     return 0;

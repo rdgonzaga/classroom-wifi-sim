@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 5 to 50 students, ax and ac, downlink and uplink.
+# 5 to 50 students, ax and ac, downlink and uplink, plus ax downlink with OFDMA.
 # Results get appended to results/runs.csv and results/per-student.csv.
 # Set NS3_DIR if ns-3 isn't at ~/ns-3, SIM_TIME to change the run length.
 set -e
@@ -28,6 +28,12 @@ for standard in ax ac; do
                 grep -v "^  Student"
         done
     done
+done
+
+# Wi-Fi 6 with DL OFDMA (UL OFDMA needs a 1600 ns GI, so it's not part of this sweep)
+for n in 5 10 20 30 40 50; do
+    ./ns3 run --no-build "classroom-wifi --standard=ax --downlink=1 --ofdma=1 --nStations=$n $COMMON" |
+        grep -v "^  Student"
 done
 
 echo "Done. Results appended to $OUT_DIR/runs.csv and $OUT_DIR/per-student.csv"

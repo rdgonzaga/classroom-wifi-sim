@@ -63,7 +63,7 @@ Observations:
 1. Wi-Fi 6 had about 32% higher total throughput than Wi-Fi 5 in every case. At MCS 5 and 20 MHz, the Wi-Fi 6 data rate is 68.8 Mbit/s and the Wi-Fi 5 data rate is 52 Mbit/s, which accounts for most of this difference.
 2. Downlink was fair for both standards (Jain's index above 0.99). The AP serves the students in turn, so each student receives about the same share.
 3. Uplink was unfair for both standards. With 30 students contending for the channel, collisions occur and some students receive very little throughput. The lowest was 0.0028 Mbit/s for one Wi-Fi 5 student.
-4. OFDMA was off in these runs, so the Wi-Fi 6 advantage here comes only from its higher data rate. OFDMA needs to be tested separately.
+4. OFDMA was off in these runs, so the Wi-Fi 6 advantage here comes only from its higher data rate. OFDMA is tested separately in `ofdma.md`.
 
 ## 3. One Student Far from the AP
 

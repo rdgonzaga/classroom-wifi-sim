@@ -15,7 +15,7 @@ How do per-student throughput and fairness degrade as more students join one AP,
 
 `classroom-wifi.cc` started as a copy of ns-3's `examples/wireless/wifi-he-network.cc` and now runs one configuration per execution. It supports 802.11ax and 802.11ac on 5 GHz, measures each student's throughput with FlowMonitor, computes Jain's fairness index, and can move one student far from the AP.
 
-OFDMA is not enabled, so Wi-Fi 6 runs are single-user only.
+OFDMA is off by default. It can be turned on with `--ofdma` (downlink) and `--ulOfdma` (uplink).
 
 ## Setup
 
@@ -57,6 +57,10 @@ Options:
 | `--guardInterval` | `800` | ns. ax: 800/1600/3200, ac: 400/800 |
 | `--distance` | `1` | meters from each student to the AP |
 | `--farDistance` | `0` | if set, one student sits this far away instead |
+| `--ofdma` | `0` | `1` = DL OFDMA on (ax only, uses the Spectrum PHY) |
+| `--ulOfdma` | `0` | `1` = UL OFDMA on too (ax only, needs `--guardInterval=1600` or `3200`) |
+| `--muSchedAccessReqInterval` | `3ms` | with UL OFDMA, how often the AP grabs the channel to send trigger frames |
+| `--phyModel` | `Yans` | `Yans` or `Spectrum`. OFDMA always uses Spectrum |
 | `--simulationTime` | `10s` | simulated time |
 | `--csv` | `results/runs.csv` | summary row is appended here |
 | `--perStudentCsv` | `results/per-student.csv` | one row per student is appended here |
@@ -71,7 +75,7 @@ For the far-student test, use `--rateManager=ideal` or `minstrel`. With a fixed 
 ./sweep.sh
 ```
 
-Runs 5, 10, 20, 30, 40 and 50 students for both standards and both directions (24 runs, fixed seed). Results are appended to `results/runs.csv` and `results/per-student.csv`. It expects ns-3 at `~/ns-3`. Set `NS3_DIR` or `SIM_TIME` to change that.
+Runs 5, 10, 20, 30, 40 and 50 students for both standards and both directions, plus Wi-Fi 6 downlink with OFDMA (30 runs, fixed seed). Results are appended to `results/runs.csv` and `results/per-student.csv`. It expects ns-3 at `~/ns-3`. Set `NS3_DIR` or `SIM_TIME` to change that.
 
 ## Layout
 
@@ -85,3 +89,4 @@ Results so far:
 
 - `results/baseline.md`: the unmodified example's numbers
 - `results/first-runs.md`: test runs of the experiment script (baseline check, Wi-Fi 6 vs 5, far student)
+- `results/ofdma.md`: test runs with OFDMA on
