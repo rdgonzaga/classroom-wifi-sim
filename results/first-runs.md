@@ -60,27 +60,27 @@ With one student, Jain's index is 1, as expected.
 
 Observations:
 
-1. Wi-Fi 6 had about 32% higher total throughput than Wi-Fi 5 in every case. At MCS 5 and 20 MHz, the Wi-Fi 6 data rate is 68.8 Mbit/s and the Wi-Fi 5 data rate is 52 Mbit/s, which accounts for most of this difference.
+1. Wi-Fi 6 had about 30% higher total throughput than Wi-Fi 5 in downlink (32% at 10 students, 30% at 30) and 25% higher in uplink. At MCS 5 and 20 MHz, the Wi-Fi 6 data rate is 68.8 Mbit/s and the Wi-Fi 5 data rate is 52 Mbit/s (32% higher), which accounts for most of this difference.
 2. Downlink was fair for both standards (Jain's index above 0.99). The AP serves the students in turn, so each student receives about the same share.
 3. Uplink was unfair for both standards. With 30 students contending for the channel, collisions occur and some students receive very little throughput. The lowest was 0.0028 Mbit/s for one Wi-Fi 5 student.
 4. OFDMA was off in these runs, so the Wi-Fi 6 advantage here comes only from its higher data rate. OFDMA is tested separately in `ofdma.md`.
 
 ## 3. One Student Far from the AP
 
-Ten students, Wi-Fi 6, downlink. Nine students stay at 1 m and one student is placed at the distance shown (`--farDistance`).
+Ten students, Wi-Fi 6, downlink. Nine students stay at 1 m and one student is placed at the distance shown (`--farDistance`). "Near students" is the mean throughput of the nine students at 1 m.
 
 ### 3.1 Ideal rate manager
 
-| Far student distance | Total (Mbit/s) | Near student (Mbit/s) | Far student (Mbit/s) |
+| Far student distance | Total (Mbit/s) | Near students, mean (Mbit/s) | Far student (Mbit/s) |
 |---|---:|---:|---:|
 | None (all at 1 m) | 118.076 | 11.81 | - |
-| 10 m | 116.581 | 11.61 | 11.69 |
-| 20 m | 111.166 | 11.07 | 11.11 |
-| 30 m | 107.274 | 10.71 | 10.62 |
-| 40 m | 101.142 | 10.17 | 10.07 |
+| 10 m | 116.581 | 11.65 | 11.69 |
+| 20 m | 111.166 | 11.12 | 11.11 |
+| 30 m | 107.274 | 10.74 | 10.62 |
+| 40 m | 101.142 | 10.12 | 10.07 |
 | 50 m | 90.882 | 9.10 | 9.01 |
-| 60 m | 0.148 | 0.0028 | 0 |
-| 80 m | 0.148 | 0.0028 | 0 |
+| 60 m | 0.148 | 0.0165 | 0 |
+| 80 m | 0.148 | 0.0165 | 0 |
 
 As the far student moves away, it uses a lower MCS and takes longer to transmit each packet. Since the AP gives each student an equal share of packets, the slower student takes up more of the channel time and the throughput of every student goes down. This is the 802.11 performance anomaly. At 50 m, the near students' throughput dropped by about 23% (from 11.81 to 9.10 Mbit/s) because of one far student.
 
@@ -90,12 +90,12 @@ The total with all students at 1 m is higher than in Section 1 (118.076 vs 59.72
 
 ### 3.2 Constant rate manager (fixed MCS 5)
 
-| Far student distance | Total (Mbit/s) | Near student (Mbit/s) | Far student (Mbit/s) |
+| Far student distance | Total (Mbit/s) | Near students, mean (Mbit/s) | Far student (Mbit/s) |
 |---|---:|---:|---:|
-| 10 m to 30 m | 59.7 | 5.96 | 5.94 |
-| 40 m | 36.162 | 3.70 | 3.54 |
-| 50 m | 5.555 | 0.66 | 0 |
-| 60 m | 0.056 | 0.0028 | 0 |
+| 10 m to 30 m | 59.7 | 5.97 | 5.94 |
+| 40 m | 36.162 | 3.62 | 3.54 |
+| 50 m | 5.555 | 0.62 | 0 |
+| 60 m | 0.056 | 0.0062 | 0 |
 
 With a fixed MCS, the far student cannot switch to a lower rate. From about 40 m, the signal is too weak for MCS 5 and the far student's packets start to fail. The AP retransmits these packets, which uses channel time and lowers the throughput of the other students as well. This is a different effect from the performance anomaly. For sub-question 2, the `ideal` or `minstrel` rate manager should be used.
 
