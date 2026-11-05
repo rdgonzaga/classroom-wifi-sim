@@ -21,3 +21,7 @@ desktop.ini
 *~
 *.swp
 .vscode/
+
+# sweep logs and process ids (the csvs hold the results)
+results/**/log.txt
+results/**/pid
