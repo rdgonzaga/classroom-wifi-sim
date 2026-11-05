@@ -35,6 +35,20 @@ What has been done so far, in order. Details are in `README.md` and `results/`.
     - See `results/demand.md`.
 11. **Double-checked the results.** Re-ran every number in `results/`. All matched. Fixed the Wi-Fi 6 vs Wi-Fi 5 percentage (25% in uplink, not 32%) and made the "near student" column in the far-student tables a mean of the nine near students.
 
+## November 6, 2026
+
+12. **Changes for the paper's full sweep.**
+    - `--layout=grid`: classroom seats instead of a circle. 7 m x 9 m room, 8 x 7 = 56 seats behind a 2 m teacher's area, desk height 0.75 m, AP on the ceiling at the center (3 m). `circle` stays the default so the baseline still matches. Students are now 2.27 to 5.53 m from the AP (3D distance).
+    - Mean delay and packet loss per student from FlowMonitor, plus the min/max throughput ratio next to Jain's index.
+    - The simulation now runs 1 s longer after the apps stop so queued packets arrive or get dropped. Throughput still only counts up to when the apps stop. Without this, FlowMonitor's loss count missed packets dropped in the Wi-Fi queue (82 counted vs 144 actually missing in one saturated run), and packets still queued at the end looked lost.
+    - `--rtsCts=1` turns on RTS/CTS for every frame. ns-3's default threshold (4692480 bytes) is never reached by our A-MPDUs (65535 bytes max), so earlier runs never used RTS/CTS.
+    - `sweep.sh` takes `LAYOUT`.
+13. **Checked.**
+    - Same throughput and Jain's index as before for: 10 students saturated (59.7212), 30 students uplink (29.0108), far student at 50 m with `ideal` (90.8824), and 20 students at 3 Mbit/s (worst student 0.951).
+    - Grid vs circle, 30 students, MCS 5: identical throughput and Jain's index (57.5652, 0.999836). Only delay changes slightly.
+    - Grid with `ideal`: identical to circle at 30 and 56 students, so no student drops MCS. Even the back corner seats (5.53 m) have about 41 dB SNR, more than MCS 11 needs.
+    - 20 students at 3 Mbit/s: mean delay 42 ms, loss 0.1%.
+
 ## Next
 
 - Demo on Friday (November 6): short 2 s runs are enough.

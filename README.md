@@ -13,7 +13,11 @@ How do per-student throughput and fairness degrade as more students join one AP,
 
 ## Current state
 
-`classroom-wifi.cc` started as a copy of ns-3's `examples/wireless/wifi-he-network.cc` and now runs one configuration per execution. It supports 802.11ax and 802.11ac on 5 GHz, measures each student's throughput with FlowMonitor, computes Jain's fairness index, and can move one student far from the AP.
+`classroom-wifi.cc` started as a copy of ns-3's `examples/wireless/wifi-he-network.cc` and now runs one configuration per execution. It supports 802.11ax and 802.11ac on 5 GHz, measures each student's throughput, mean delay and packet loss with FlowMonitor, computes Jain's fairness index and the min/max throughput ratio, and can move one student far from the AP.
+
+Students sit in a circle around the AP by default (`--layout=circle`), which matches the original example. `--layout=grid` puts them in classroom seats instead: a 7 m x 9 m room with an 8 x 7 grid of seats (56) behind a 2 m teacher's area, students at desk height (0.75 m) and the AP on the ceiling at the center of the room (3.5, 4.5, 3). Seats fill front to back, row by row.
+
+After the apps stop, the simulation runs 1 more second so packets still in the queues either arrive or get dropped. Throughput only counts what arrived before the apps stopped (same as before). Delay and loss use everything, so loss is real loss and not packets that were still waiting when the simulation ended.
 
 OFDMA is off by default. It can be turned on with `--ofdma` (downlink) and `--ulOfdma` (uplink).
 
@@ -58,8 +62,15 @@ Options:
 | `--mcs` | `5` | MCS for the constant rate manager (ax: 0-11, ac: 0-9) |
 | `--channelWidth` | `20` | MHz: 20, 40, 80 or 160 |
 | `--guardInterval` | `800` | ns. ax: 800/1600/3200, ac: 400/800 |
-| `--distance` | `1` | meters from each student to the AP |
-| `--farDistance` | `0` | if set, one student sits this far away instead |
+| `--layout` | `circle` | `circle` (around the AP, same height) or `grid` (classroom seats) |
+| `--distance` | `1` | circle layout: meters from each student to the AP |
+| `--farDistance` | `0` | if set, the last student sits this far from the AP (horizontally) instead. In the grid layout they end up outside the room, behind the AP |
+| `--roomWidth` | `7` | grid layout: room width in meters |
+| `--roomDepth` | `9` | grid layout: room depth in meters, front to back |
+| `--rows` | `8` | grid layout: rows of seats. `nStations` can't be more than `rows * cols` |
+| `--cols` | `7` | grid layout: seats per row |
+| `--apZ` | `3` | grid layout: AP height in meters (ceiling) |
+| `--rtsCts` | `0` | `1` = RTS/CTS before every data frame. With `0` (ns-3's default threshold of 4692480 bytes) our A-MPDUs (at most 65535 bytes) never use it |
 | `--ofdma` | `0` | `1` = DL OFDMA on (ax only, uses the Spectrum PHY) |
 | `--ulOfdma` | `0` | `1` = UL OFDMA on too (ax only, needs `--guardInterval=1600` or `3200`) |
 | `--muSchedAccessReqInterval` | `3ms` | with UL OFDMA, how often the AP grabs the channel to send trigger frames |
@@ -68,7 +79,9 @@ Options:
 | `--csv` | `results/runs.csv` | summary row is appended here |
 | `--perStudentCsv` | `results/per-student.csv` | one row per student is appended here |
 
-Relative CSV paths are relative to where you run `./ns3` (so `~/ns-3/results/` by default). Pass full paths to write into this repo.
+Relative CSV paths are relative to where you run `./ns3` (so `~/ns-3/results/` by default). Pass full paths to write into this repo. If an existing CSV has different columns (from an older version of the script), it's renamed to `runs-old.csv` (or `per-student-old.csv`) and a new file is started.
+
+The per-student distance printed and written to the CSV is the real 3D distance to the AP. Delay is FlowMonitor's mean delay of the packets that arrived, from the sender's IP layer to the receiver's (so it includes queueing). A student that received nothing has `nan` delay. Loss is the share of sent packets that never arrived. Saturated runs always show high delay and loss because the queues are always full. Use `--demand` runs for delay.
 
 For the far-student test, use `--rateManager=ideal` or `minstrel`. With a fixed MCS the far student can't drop to a slower rate. On the default channel model a student past about 50 m is out of range, and the whole network stalls.
 
@@ -80,7 +93,7 @@ For the far-student test, use `--rateManager=ideal` or `minstrel`. With a fixed 
 
 Runs 5, 10, 20, 30, 40 and 50 students for both standards and both directions, plus Wi-Fi 6 downlink with OFDMA. That's 30 settings, each run 5 times with `--RngRun=1` to `5` (150 runs). Uplink results change noticeably from run to run because of random collisions, so average the 5 runs (the `run` column in the CSV) instead of using a single one. Set `RUNS` to change the number of runs. Results are appended to `results/runs.csv` and `results/per-student.csv`. It expects ns-3 at `~/ns-3`. Set `NS3_DIR` to change that and `SIM_TIME` to change the run length.
 
-`DEMAND` sets `--demand` for every run (default `0`, saturated) and `STUDENTS` sets the student counts. For example, the runs in `results/demand.md`:
+`DEMAND` sets `--demand` for every run (default `0`, saturated), `STUDENTS` sets the student counts and `LAYOUT` sets `--layout` (default `circle`). For example, the runs in `results/demand.md`:
 
 ```sh
 DEMAND=3 SIM_TIME=2s RUNS=3 STUDENTS="5 10 15 20 25 30 35 40 45 50" ./sweep.sh
