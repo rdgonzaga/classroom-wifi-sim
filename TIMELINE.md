@@ -51,8 +51,8 @@ What has been done so far, in order. Details are in `README.md` and `results/`.
 14. **Found the cause of the four students (item 10).** In downlink all flows leave the AP through ns-3's default queue disc, FqCoDel. It hashes each flow into one of 1024 queues and serves the queues equally, so two students whose flows land in the same queue each get half a share. With 40 flows the chance of at least one collision is about 50%. Changing FqCoDel's hash salt (`Perturbation`) moved the effect to other students, and 65536 queues removed it. Uplink is not affected, since each student's queue disc only carries one flow.
     - Fix: `Flows` is now set to the full 32-bit range. ns-3 only creates a queue when a flow first uses it, so this costs nothing.
     - 40 students, 3 Mbit/s, run 1: Jain's index 0.978 to 0.9998, min/max 0.50 to 0.96 (same for grid). 50 students saturated, Wi-Fi 5: min 0.49 to 0.86 Mbit/s.
-    - Unchanged: 10 and 30 students saturated, 30 students uplink, 20 students at 3 Mbit/s (worst 0.951067).
-    - The saturated values from this ns-3 install (re-cloned on November 4) differ slightly from `results/` (10 students: 59.8914, not 59.7212; 30 students: 57.913, not 57.5652). The code before item 12 gives the same new values, so the change comes from the ns-3 install, not from item 12 or 14. The item 13 check doesn't hold for these values. The full sweep will replace them.
+    - Unchanged (2 s runs, as in `baseline.md`): 1 student 59.9284, 10 students 59.7212 (Jain 0.999944), 30 students 57.5652, 30 students uplink 29.0108 (Jain 0.751592), 20 students at 3 Mbit/s (worst 0.951067).
+    - The baseline numbers are for 2 s. The script's default is 10 s, which gives slightly different values (10 students: 59.8914), so always pass `--simulationTime=2s` when comparing against `results/`.
 
 ## Next
 
