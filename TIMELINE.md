@@ -48,11 +48,15 @@ What has been done so far, in order. Details are in `README.md` and `results/`.
     - Grid vs circle, 30 students, MCS 5: identical throughput and Jain's index (57.5652, 0.999836). Only delay changes slightly.
     - Grid with `ideal`: identical to circle at 30 and 56 students, so no student drops MCS. Even the back corner seats (5.53 m) have about 41 dB SNR, more than MCS 11 needs.
     - 20 students at 3 Mbit/s: mean delay 42 ms, loss 0.1%.
+14. **Found the cause of the four students (item 10).** In downlink all flows leave the AP through ns-3's default queue disc, FqCoDel. It hashes each flow into one of 1024 queues and serves the queues equally, so two students whose flows land in the same queue each get half a share. With 40 flows the chance of at least one collision is about 50%. Changing FqCoDel's hash salt (`Perturbation`) moved the effect to other students, and 65536 queues removed it. Uplink is not affected, since each student's queue disc only carries one flow.
+    - Fix: `Flows` is now set to the full 32-bit range. ns-3 only creates a queue when a flow first uses it, so this costs nothing.
+    - 40 students, 3 Mbit/s, run 1: Jain's index 0.978 to 0.9998, min/max 0.50 to 0.96 (same for grid). 50 students saturated, Wi-Fi 5: min 0.49 to 0.86 Mbit/s.
+    - Unchanged: 10 and 30 students saturated, 30 students uplink, 20 students at 3 Mbit/s (worst 0.951067).
+    - The saturated values from this ns-3 install (re-cloned on November 4) differ slightly from `results/` (10 students: 59.8914, not 59.7212; 30 students: 57.913, not 57.5652). The code before item 12 gives the same new values, so the change comes from the ns-3 install, not from item 12 or 14. The item 13 check doesn't hold for these values. The full sweep will replace them.
 
 ## Next
 
 - Demo on Friday (November 6): short 2 s runs are enough.
-- Find out why four students get half the share at 40+ students (item 10).
 - Full 10 s sweep for the paper, saturated and with `--demand`.
 
 All results so far come from short 2 s test runs, not the final sweep.

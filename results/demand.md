@@ -104,9 +104,11 @@ Observations:
 
 At 5 Mbit/s the network fills up at about 10 to 12 students in downlink. With DL OFDMA the 10-student case still passes (0.966), but the total stays at about 48.6 Mbit/s for 15 students or more, below the 58 to 60 Mbit/s without OFDMA.
 
-## 4. Unexplained Result: Four Students at 40 Students or More
+## 4. Four Students at 40 Students or More (Fixed)
 
-In downlink with 40 or more students, the worst student receives about half of what the other students receive, and Jain's index falls from about 0.9998 to about 0.98. In each such run, exactly four students are affected. For example, with Wi-Fi 6, 3 Mbit/s, 40 students and run 1, students 8, 13, 23 and 26 received 0.76 to 0.81 Mbit/s while the mean was 1.42 Mbit/s. Which students are affected changes with the number of students. All students are 1 m from the AP, so distance is not the cause. The same pattern appears in the saturated runs (`ofdma.md`, 50 students: minimum 0.4928 Mbit/s against a mean of 0.86 Mbit/s for Wi-Fi 5). The cause has not been found yet. It does not affect the limits in Section 1, which are all below 40 students.
+The cause was a hash collision in the AP's FqCoDel queue disc, fixed in `TIMELINE.md` item 14. The 40+ student rows in this file were produced before the fix.
+
+In downlink with 40 or more students, the worst student receives about half of what the other students receive, and Jain's index falls from about 0.9998 to about 0.98. In each such run, exactly four students are affected. For example, with Wi-Fi 6, 3 Mbit/s, 40 students and run 1, students 8, 13, 23 and 26 received 0.76 to 0.81 Mbit/s while the mean was 1.42 Mbit/s. Which students are affected changes with the number of students. All students are 1 m from the AP, so distance is not the cause. The same pattern appears in the saturated runs (`ofdma.md`, 50 students: minimum 0.4928 Mbit/s against a mean of 0.86 Mbit/s for Wi-Fi 5). It does not affect the limits in Section 1, which are all below 40 students.
 
 ## Notes for the Paper
 
