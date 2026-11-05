@@ -311,6 +311,13 @@ main(int argc, char* argv[])
         Config::SetDefault("ns3::TcpSocket::SegmentSize", UintegerValue(payloadSize));
     }
 
+    // the AP's default queue disc (FqCoDel) hashes each flow into one of 1024 queues and serves the
+    // queues equally. with 40+ downlink flows two students often land in the same queue and each
+    // gets half a share. ns-3 only creates a queue when a flow first uses it, so using the full
+    // 32-bit hash range costs nothing and makes a collision very unlikely (about 1 in 3 million
+    // runs at 56 students)
+    Config::SetDefault("ns3::FqCoDelQueueDisc::Flows", UintegerValue(4294967295U));
+
     if (ofdma)
     {
         // same as --dlAckType=AGGR-MU-BAR in the original example
