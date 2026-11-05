@@ -14,8 +14,12 @@
 // fixed rate instead. Runs one configuration and appends the results to --csv and
 // --perStudentCsv.
 //
-// Students sit in a circle at --distance meters from the AP. If --farDistance is set, the last
-// student is placed that far away instead.
+// --layout=circle (default): students sit in a circle at --distance meters from the AP, all at
+// the same height. --layout=grid: students sit at desks in a classroom (rows x cols seats, filled
+// front to back) and the AP is on the ceiling at the center of the room. In both layouts, if
+// --farDistance is set, the last student is placed that far from the AP (horizontally) instead.
+//
+// Besides throughput, each student's mean delay and packet loss come from FlowMonitor.
 
 #include "ns3/boolean.h"
 #include "ns3/command-line.h"
@@ -50,6 +54,9 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <iomanip>
+#include <limits>
+#include <sstream>
 #include <vector>
 
 using namespace ns3;
@@ -64,6 +71,28 @@ OpenCsv(const std::string& path, const std::string& header)
     if (!parent.empty())
     {
         std::filesystem::create_directories(parent);
+    }
+    // a file from an older version of this script has different columns. move it aside
+    // (e.g. runs.csv -> runs-old.csv) instead of mixing the two
+    if (std::filesystem::is_regular_file(path) && std::filesystem::file_size(path) > 0)
+    {
+        std::ifstream existing(path);
+        std::string firstLine;
+        std::getline(existing, firstLine);
+        existing.close();
+        if (firstLine != header)
+        {
+            auto p = std::filesystem::path(path);
+            auto old = p.parent_path() / (p.stem().string() + "-old" + p.extension().string());
+            for (int i = 2; std::filesystem::exists(old); i++)
+            {
+                old = p.parent_path() /
+                      (p.stem().string() + "-old" + std::to_string(i) + p.extension().string());
+            }
+            std::filesystem::rename(p, old);
+            std::cerr << "Note: " << path << " had different columns, moved it to " << old
+                      << '\n';
+        }
     }
     // only regular files get a header, so /dev/null works too
     bool isNew = !std::filesystem::exists(path) || (std::filesystem::is_regular_file(path) &&
@@ -92,8 +121,16 @@ main(int argc, char* argv[])
     bool udp{true};
     bool downlink{true};
     Time simulationTime{"10s"};
-    double distance{1.0};    // meters
+    std::string layout{"circle"};
+    double distance{1.0};    // meters, circle layout only
     double farDistance{0.0}; // meters, 0 means no far student
+    // grid layout: a typical PH classroom (7 m x 9 m, 3 m ceiling, 8 x 7 = 56 seats)
+    double roomWidth{7.0};  // meters, x
+    double roomDepth{9.0};  // meters, y. the front of the room (teacher) is at y = 0
+    std::size_t rows{8};    // rows of seats, front to back
+    std::size_t cols{7};    // seats per row
+    double apZ{3.0};        // AP height (ceiling), meters
+    bool rtsCts{false};
     std::size_t nStations{1};
     double demand{0.0}; // Mbit/s per student, 0 means saturated
     int mcs{5};
@@ -120,10 +157,22 @@ main(int argc, char* argv[])
                  "PHY model: Yans or Spectrum. OFDMA always uses Spectrum",
                  phyModel);
     cmd.AddValue("nStations", "Number of students (stations)", nStations);
-    cmd.AddValue("distance", "Distance in meters between each student and the AP", distance);
+    cmd.AddValue("layout",
+                 "Student placement: circle (around the AP) or grid (classroom seats)",
+                 layout);
+    cmd.AddValue("distance",
+                 "Circle layout: distance in meters between each student and the AP",
+                 distance);
     cmd.AddValue("farDistance",
-                 "If set, one student is placed this many meters from the AP instead",
+                 "If set, one student is placed this many meters from the AP (horizontally) "
+                 "instead",
                  farDistance);
+    cmd.AddValue("roomWidth", "Grid layout: room width in meters", roomWidth);
+    cmd.AddValue("roomDepth", "Grid layout: room depth in meters (front to back)", roomDepth);
+    cmd.AddValue("rows", "Grid layout: rows of seats", rows);
+    cmd.AddValue("cols", "Grid layout: seats per row", cols);
+    cmd.AddValue("apZ", "Grid layout: AP height in meters (on the ceiling)", apZ);
+    cmd.AddValue("rtsCts", "Use RTS/CTS before every data frame if set to 1", rtsCts);
     cmd.AddValue("demand",
                  "Offered load per student in Mbit/s (application payload). 0 means saturated",
                  demand);
@@ -206,6 +255,29 @@ main(int argc, char* argv[])
     {
         NS_FATAL_ERROR("demand can't be negative");
     }
+    if (layout != "circle" && layout != "grid")
+    {
+        NS_FATAL_ERROR("Invalid layout: " << layout << " (must be circle or grid)");
+    }
+    // seats start 2 m from the front, the teacher's area
+    const double frontClearance = 2.0;
+    if (layout == "grid")
+    {
+        if (rows < 1 || cols < 1)
+        {
+            NS_FATAL_ERROR("Need at least one row and one column");
+        }
+        if (nStations > rows * cols)
+        {
+            NS_FATAL_ERROR(nStations << " students don't fit in " << rows << " x " << cols
+                                     << " = " << rows * cols << " seats");
+        }
+        if (roomWidth <= 0 || roomDepth <= frontClearance || apZ < 0)
+        {
+            NS_FATAL_ERROR("Room must be wider than 0 m, deeper than " << frontClearance
+                                                                         << " m, and apZ >= 0");
+        }
+    }
 
     // e.g. VHT MCS 9 isn't allowed at 20 MHz with 1 stream
     auto getMode = [isAx](int m) { return isAx ? HePhy::GetHeMcs(m) : VhtPhy::GetVhtMcs(m); };
@@ -244,6 +316,13 @@ main(int argc, char* argv[])
         // same as --dlAckType=AGGR-MU-BAR in the original example
         Config::SetDefault("ns3::WifiDefaultAckManager::DlMuAckSequenceType",
                            EnumValue(WifiAcknowledgment::DL_MU_AGGREGATE_TF));
+    }
+
+    if (rtsCts)
+    {
+        // threshold 0 = every frame is bigger than it, so every frame gets RTS/CTS. the default
+        // (4692480 bytes) is never reached by our A-MPDUs
+        Config::SetDefault("ns3::WifiRemoteStationManager::RtsCtsThreshold", UintegerValue(0));
     }
 
     NodeContainer wifiStaNodes;
@@ -361,21 +440,56 @@ main(int argc, char* argv[])
     streamNumber += WifiHelper::AssignStreams(apDevice, streamNumber);
     streamNumber += WifiHelper::AssignStreams(staDevices, streamNumber);
 
-    // mobility. AP at the origin, students in a circle around it
-    std::vector<double> staDistances(nStations, distance);
-    if (farDistance > 0)
+    // mobility
+    Vector apPos;
+    std::vector<Vector> staPos(nStations);
+    if (layout == "circle")
     {
-        staDistances[nStations - 1] = farDistance;
+        // AP at the origin, students in a circle around it at the same height
+        apPos = Vector(0.0, 0.0, 0.0);
+        for (std::size_t i = 0; i < nStations; i++)
+        {
+            double d = (farDistance > 0 && i == nStations - 1) ? farDistance : distance;
+            double angle = 2 * M_PI * i / nStations;
+            staPos[i] = Vector(d * std::cos(angle), d * std::sin(angle), 0.0);
+        }
+    }
+    else
+    {
+        // AP on the ceiling at the center of the room. seats are spread evenly over the room
+        // behind the teacher's area, filled row by row from the front, at desk height
+        const double deskZ = 0.75;
+        apPos = Vector(roomWidth / 2, roomDepth / 2, apZ);
+        const double colSpacing = roomWidth / cols;
+        const double rowSpacing = (roomDepth - frontClearance) / rows;
+        for (std::size_t i = 0; i < nStations; i++)
+        {
+            std::size_t row = i / cols;
+            std::size_t col = i % cols;
+            staPos[i] = Vector((col + 0.5) * colSpacing,
+                               frontClearance + (row + 0.5) * rowSpacing,
+                               deskZ);
+        }
+        // the far student is behind the AP, outside the room (e.g. in the hallway)
+        if (farDistance > 0)
+        {
+            staPos[nStations - 1] = Vector(apPos.x, apPos.y + farDistance, deskZ);
+        }
+    }
+
+    // real 3D distance to the AP, this is what the propagation loss model uses
+    std::vector<double> staDistances(nStations);
+    for (std::size_t i = 0; i < nStations; i++)
+    {
+        staDistances[i] = CalculateDistance(staPos[i], apPos);
     }
 
     MobilityHelper mobility;
     Ptr<ListPositionAllocator> positionAlloc = CreateObject<ListPositionAllocator>();
-    positionAlloc->Add(Vector(0.0, 0.0, 0.0));
-    for (std::size_t i = 0; i < nStations; i++)
+    positionAlloc->Add(apPos);
+    for (const auto& pos : staPos)
     {
-        double angle = 2 * M_PI * i / nStations;
-        positionAlloc->Add(
-            Vector(staDistances[i] * std::cos(angle), staDistances[i] * std::sin(angle), 0.0));
+        positionAlloc->Add(pos);
     }
     mobility.SetPositionAllocator(positionAlloc);
     mobility.SetMobilityModel("ns3::ConstantPositionMobilityModel");
@@ -478,18 +592,28 @@ main(int argc, char* argv[])
     FlowMonitorHelper flowHelper;
     Ptr<FlowMonitor> monitor = flowHelper.InstallAll();
 
-    Simulator::Stop(simulationTime + clientAppStartTime);
+    // throughput is counted until the apps stop, same as before. after that the simulation keeps
+    // going for drainTime so the packets still in the queues either arrive or get dropped (the
+    // Wi-Fi queue drops anything older than 500 ms). otherwise they would count as lost and their
+    // delay would be missing
+    const Time drainTime = Seconds(1);
+    FlowMonitor::FlowStatsContainer statsAtStop;
+    Simulator::Schedule(simulationTime + clientAppStartTime,
+                        [&]() { statsAtStop = monitor->GetFlowStats(); });
+    Simulator::Stop(simulationTime + clientAppStartTime + drainTime);
     Simulator::Run();
 
     // FlowMonitor counts whole IP packets, so subtract the headers to get the same goodput the
     // original printed (UDP: 20 + 8, TCP: 20 + 20 + 12 timestamp option)
-    monitor->CheckForLostPackets();
     auto classifier = DynamicCast<Ipv4FlowClassifier>(flowHelper.GetClassifier());
     const uint32_t headerBytes = udp ? 28 : 52;
     const Ipv4Address apAddress = apNodeInterface.GetAddress(0);
     std::vector<double> perStudent(nStations, 0.0); // Mbit/s
+    std::vector<double> delaySumMs(nStations, 0.0);
+    std::vector<uint64_t> txPackets(nStations, 0);
+    std::vector<uint64_t> rxPackets(nStations, 0);
 
-    for (const auto& [flowId, stats] : monitor->GetFlowStats())
+    for (const auto& [flowId, stats] : statsAtStop)
     {
         auto flow = classifier->FindFlow(flowId);
         for (std::size_t i = 0; i < nStations; i++)
@@ -508,20 +632,86 @@ main(int argc, char* argv[])
         }
     }
 
+    // delay and loss use the stats after the drain
+    monitor->CheckForLostPackets();
+    for (const auto& [flowId, stats] : monitor->GetFlowStats())
+    {
+        auto flow = classifier->FindFlow(flowId);
+        for (std::size_t i = 0; i < nStations; i++)
+        {
+            auto staAddress = staNodeInterfaces.GetAddress(i);
+            // data direction only, so TCP ACK flows are skipped
+            bool isThisStudent =
+                downlink ? (flow.sourceAddress == apAddress && flow.destinationAddress == staAddress)
+                         : (flow.sourceAddress == staAddress && flow.destinationAddress == apAddress);
+            if (isThisStudent)
+            {
+                // delay is from the sender's IP layer to the receiver's, so it includes the
+                // time waiting in the Wi-Fi queue
+                delaySumMs[i] += stats.delaySum.GetSeconds() * 1000;
+                txPackets[i] += stats.txPackets;
+                rxPackets[i] += stats.rxPackets;
+            }
+        }
+    }
+
     Simulator::Destroy();
+
+    // per student: mean delay of the received packets, and loss = packets sent but never
+    // received. after the drain this is the same as FlowMonitor's lostPackets (checked). a
+    // student that received nothing has no delay (NaN)
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    std::vector<double> delayMs(nStations, nan);
+    std::vector<double> lossPct(nStations, 0.0);
+    for (std::size_t i = 0; i < nStations; i++)
+    {
+        if (rxPackets[i] > 0)
+        {
+            delayMs[i] = delaySumMs[i] / rxPackets[i];
+        }
+        if (txPackets[i] > 0)
+        {
+            lossPct[i] = 100.0 * (txPackets[i] - rxPackets[i]) / txPackets[i];
+        }
+    }
 
     double total = 0;
     double sumSquares = 0;
     double minThroughput = perStudent[0];
+    double maxThroughput = perStudent[0];
     for (double x : perStudent)
     {
         total += x;
         sumSquares += x * x;
         minThroughput = std::min(minThroughput, x);
+        maxThroughput = std::max(maxThroughput, x);
     }
     double mean = total / nStations;
     // Jain's index: 1 = perfectly fair, 1/n = one student gets everything
     double jain = sumSquares > 0 ? (total * total) / (nStations * sumSquares) : 0;
+    // worst student vs best student, 1 = same throughput
+    double minMaxRatio = maxThroughput > 0 ? minThroughput / maxThroughput : 0;
+
+    // delay averaged over the students that received something, worst = highest
+    double delaySum = 0;
+    std::size_t delayCount = 0;
+    double worstDelay = nan;
+    double lossSum = 0;
+    for (std::size_t i = 0; i < nStations; i++)
+    {
+        lossSum += lossPct[i];
+        if (!std::isnan(delayMs[i]))
+        {
+            delaySum += delayMs[i];
+            delayCount++;
+            if (std::isnan(worstDelay) || delayMs[i] > worstDelay)
+            {
+                worstDelay = delayMs[i];
+            }
+        }
+    }
+    double meanDelay = delayCount > 0 ? delaySum / delayCount : nan;
+    double meanLoss = lossSum / nStations;
     // share of the demand each student actually got (only with --demand)
     double meanSatisfaction = demand > 0 ? mean / demand : 0;
     double minSatisfaction = demand > 0 ? minThroughput / demand : 0;
@@ -546,42 +736,55 @@ main(int argc, char* argv[])
     {
         std::cout << "saturated, ";
     }
-    std::cout << simulationTime.As(Time::S) << ", run " << run << '\n';
+    std::cout << layout << " layout, " << (rtsCts ? "RTS/CTS on, " : "")
+              << simulationTime.As(Time::S) << ", run " << run << '\n';
     for (std::size_t i = 0; i < nStations; i++)
     {
-        std::cout << "  Student " << i + 1 << " (" << staDistances[i]
-                  << " m): " << perStudent[i] << " Mbit/s\n";
+        std::ostringstream dist;
+        dist << std::fixed << std::setprecision(2) << staDistances[i];
+        std::cout << "  Student " << i + 1 << " (" << dist.str() << " m): " << perStudent[i]
+                  << " Mbit/s, delay " << delayMs[i] << " ms, loss " << lossPct[i] << " %\n";
     }
     std::cout << "Total throughput: " << total << " Mbit/s\n"
               << "Mean per student: " << mean << " Mbit/s\n"
               << "Min per student: " << minThroughput << " Mbit/s\n"
-              << "Jain's fairness index: " << jain << std::endl;
+              << "Max per student: " << maxThroughput << " Mbit/s\n"
+              << "Jain's fairness index: " << jain << '\n'
+              << "Min / max ratio: " << minMaxRatio << '\n'
+              << "Mean delay: " << meanDelay << " ms\n"
+              << "Worst student's delay: " << worstDelay << " ms\n"
+              << "Mean loss: " << meanLoss << " %" << std::endl;
     if (demand > 0)
     {
         std::cout << "Delivered / demand (mean): " << meanSatisfaction << '\n'
                   << "Delivered / demand (worst student): " << minSatisfaction << std::endl;
     }
 
+    // new columns go at the end so older scripts that read by position still work
     auto csv = OpenCsv(csvPath,
                        "standard,nStations,direction,rateManager,farDistance,totalMbps,meanMbps,"
                        "minMbps,jain,mcs,channelWidth,guardInterval,distance,udp,simulationTime,run,"
-                       "ofdma,phyModel,demand,meanSatisfaction,minSatisfaction");
+                       "ofdma,phyModel,demand,meanSatisfaction,minSatisfaction,layout,rtsCts,"
+                       "maxMbps,minMaxRatio,meanDelayMs,worstDelayMs,meanLossPct");
     csv << standard << ',' << nStations << ',' << direction << ',' << rateManager << ','
         << farDistance << ',' << total << ',' << mean << ',' << minThroughput << ',' << jain << ','
         << mcs << ',' << channelWidth << ',' << guardInterval << ',' << distance << ',' << udp << ','
         << simulationTime.GetSeconds() << ',' << run << ',' << ofdmaStr << ',' << phyModel << ','
-        << demand << ',' << meanSatisfaction << ',' << minSatisfaction << '\n';
+        << demand << ',' << meanSatisfaction << ',' << minSatisfaction << ',' << layout << ','
+        << rtsCts << ',' << maxThroughput << ',' << minMaxRatio << ',' << meanDelay << ','
+        << worstDelay << ',' << meanLoss << '\n';
 
     auto perStudentCsv = OpenCsv(perStudentCsvPath,
                                  "standard,nStations,direction,rateManager,farDistance,mcs,ofdma,"
-                                 "run,student,studentDistance,throughputMbps,demand,satisfaction");
+                                 "run,student,studentDistance,throughputMbps,demand,satisfaction,"
+                                 "layout,delayMs,lossPct");
     for (std::size_t i = 0; i < nStations; i++)
     {
         perStudentCsv << standard << ',' << nStations << ',' << direction << ',' << rateManager
                       << ',' << farDistance << ',' << mcs << ',' << ofdmaStr << ',' << run << ','
                       << i + 1 << ',' << staDistances[i] << ',' << perStudent[i] << ',' << demand
-                      << ',' << (demand > 0 ? perStudent[i] / demand : 0) << '\n';
+                      << ',' << (demand > 0 ? perStudent[i] / demand : 0) << ',' << layout << ','
+                      << delayMs[i] << ',' << lossPct[i] << '\n';
     }
-
     return 0;
 }
