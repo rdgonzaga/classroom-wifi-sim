@@ -2,7 +2,7 @@
 
 ns-3 simulation for the NSCOM03 (Data Communications, DLSU) Network Simulation Study, Group 5.
 
-We're simulating Wi-Fi in a crowded classroom: 5 to 50 students on one access point, based on DLSU's campus Wi-Fi.
+We're simulating Wi-Fi in a crowded classroom: 5 to 50 students on one ceiling-mounted access point in a DLSU-sized classroom (7 m x 9 m).
 
 ## Research question
 
@@ -108,9 +108,12 @@ results/            recorded results
 TIMELINE.md         what has been done so far, in order
 ```
 
-Results so far:
+Results:
 
+- `results/final.md`: **the final results used in the paper** (10 s runs, 5 runs per setting, grid layout). Raw CSVs in `results/final/`
 - `results/baseline.md`: the unmodified example's numbers
 - `results/first-runs.md`: test runs of the experiment script (baseline check, Wi-Fi 6 vs 5, far student)
 - `results/ofdma.md`: test runs with OFDMA on
 - `results/demand.md`: fixed demand per student, how many students one AP can serve (sub-question 1)
+
+The last four are preliminary 2 s test runs, kept for the record. Use `final.md` for numbers.
