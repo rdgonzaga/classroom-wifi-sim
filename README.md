@@ -110,7 +110,7 @@ TIMELINE.md         what has been done so far, in order
 
 Results:
 
-- `results/final.md`: **the final results used in the paper** (10 s runs, 5 runs per setting, grid layout). Raw CSVs in `results/final/`
+- `results/final.md`: the final results used in the paper (10 s runs, 5 runs per setting, grid layout). Raw CSVs in `results/final/`
 - `results/baseline.md`: the unmodified example's numbers
 - `results/first-runs.md`: test runs of the experiment script (baseline check, Wi-Fi 6 vs 5, far student)
 - `results/ofdma.md`: test runs with OFDMA on

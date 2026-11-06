@@ -143,10 +143,10 @@ Averages of 5 runs. Mean and worst are delivered / demand.
 
 Observations:
 
-1. **Downlink degrades evenly.** Until the total demand reaches the channel's capacity, every student receives the full demand. After that, the worst student stays within 0.003 of the mean and Jain's index stays at 1.0000. The 5 runs give almost the same values.
-2. **Uplink degrades unevenly.** The total stops rising at about 35 Mbit/s for Wi-Fi 6 and 28.5 Mbit/s for Wi-Fi 5, then falls as students are added. The worst student falls far below the mean (at 20 students on Wi-Fi 6: 0.275 against 0.586), Jain's index drops to about 0.7 at 50 students, and the runs differ much more than in downlink. Each student contends for the channel on its own, so collisions and backoff give some students far fewer transmissions than others.
-3. **Delay stops growing at about 400 to 550 ms.** Once the AP's queue is full, ns-3 drops packets that have waited longer than the Wi-Fi MAC queue's maximum delay (500 ms by default), so the extra load shows up as loss instead of delay. Loss is 0 until the capacity limit and then rises quickly.
-4. **DL OFDMA** gives lower delay than OFDMA off at 5 and 10 students (0.6 and 1.4 ms against 0.7 and 2.3 ms), but caps total throughput at 48.6 Mbit/s, so it fills up at 20 students instead of 25 and its delay passes 100 ms earlier.
+1. Downlink degrades evenly. Until the total demand reaches the channel's capacity, every student receives the full demand. After that, the worst student stays within 0.003 of the mean and Jain's index stays at 1.0000. The 5 runs give almost the same values.
+2. Uplink degrades unevenly. The total stops rising at about 35 Mbit/s for Wi-Fi 6 and 28.5 Mbit/s for Wi-Fi 5, then falls as students are added. The worst student falls far below the mean (at 20 students on Wi-Fi 6: 0.275 against 0.586), Jain's index drops to about 0.7 at 50 students, and the runs differ much more than in downlink. Each student contends for the channel on its own, so collisions and backoff give some students far fewer transmissions than others.
+3. Delay stops growing at about 400 to 550 ms. Once the AP's queue is full, ns-3 drops packets that have waited longer than the Wi-Fi MAC queue's maximum delay (500 ms by default), so the extra load shows up as loss instead of delay. Loss is 0 until the capacity limit and then rises quickly.
+4. DL OFDMA gives lower delay than OFDMA off at 5 and 10 students (0.6 and 1.4 ms against 0.7 and 2.3 ms), but caps total throughput at 48.6 Mbit/s, so it fills up at 20 students instead of 25 and its delay passes 100 ms earlier.
 
 ## 3. 5 Mbit/s per Student
 
