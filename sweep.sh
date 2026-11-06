@@ -1,10 +1,6 @@
 #!/usr/bin/env bash
-# 5 to 50 students, ax and ac, downlink and uplink, plus ax downlink with OFDMA.
-# Each setting is run RUNS times with a different --RngRun, so results can be averaged.
-# Results get appended to results/runs.csv and results/per-student.csv.
-# Set NS3_DIR if ns-3 isn't at ~/ns-3, SIM_TIME to change the run length, RUNS for the
-# number of runs per setting, DEMAND for a fixed load per student in Mbit/s (0 = saturated),
-# STUDENTS for the list of student counts, LAYOUT for circle or grid (classroom seats, max 56).
+# ax and ac, downlink and uplink, plus ax DL OFDMA, RUNS runs each. Appends to OUT_DIR.
+# Env: NS3_DIR, SIM_TIME, RUNS, DEMAND (Mbit/s, 0 = saturated), STUDENTS, LAYOUT, OUT_DIR.
 set -e
 
 NS3_DIR=${NS3_DIR:-$HOME/ns-3}
@@ -16,7 +12,7 @@ LAYOUT=${LAYOUT:-circle}
 REPO_DIR=$(cd "$(dirname "$0")" && pwd)
 OUT_DIR=${OUT_DIR:-$REPO_DIR/results}
 
-# fixed seed, only the run number changes, so reruns give the same numbers
+# fixed seed so reruns match
 SEED=1
 
 COMMON="--mcs=5 --channelWidth=20 --guardInterval=800 --simulationTime=$SIM_TIME --RngSeed=$SEED"
@@ -37,7 +33,7 @@ for run in $(seq 1 "$RUNS"); do
         done
     done
 
-    # Wi-Fi 6 with DL OFDMA (UL OFDMA needs a 1600 ns GI, so it's not part of this sweep)
+    # UL OFDMA needs a 1600 ns GI, so it's left out
     for n in $STUDENTS; do
         ./ns3 run --no-build "classroom-wifi --standard=ax --downlink=1 --ofdma=1 --nStations=$n --RngRun=$run $COMMON" |
             grep -v "^  Student"

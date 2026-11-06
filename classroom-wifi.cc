@@ -6,20 +6,8 @@
  * Author: Sebastien Deronne <sebastien.deronne@gmail.com>
  */
 
-// Based on ns-3.48's examples/wireless/wifi-he-network.cc. Modified by NSCOM03 Group 5 for
-// the crowded classroom study.
-//
-// One AP and nStations students on 5 GHz, using 802.11ax or 802.11ac. Each student has one
-// UDP (or TCP) flow. By default the flows are saturated. With --demand each student asks for a
-// fixed rate instead. Runs one configuration and appends the results to --csv and
-// --perStudentCsv.
-//
-// --layout=circle (default): students sit in a circle at --distance meters from the AP, all at
-// the same height. --layout=grid: students sit at desks in a classroom (rows x cols seats, filled
-// front to back) and the AP is on the ceiling at the center of the room. In both layouts, if
-// --farDistance is set, the last student is placed that far from the AP (horizontally) instead.
-//
-// Besides throughput, each student's mean delay and packet loss come from FlowMonitor.
+// Based on ns-3.48's examples/wireless/wifi-he-network.cc, modified by NSCOM03 Group 5.
+// One AP, nStations students, one flow each. Appends results to --csv and --perStudentCsv.
 
 #include "ns3/boolean.h"
 #include "ns3/command-line.h"
@@ -63,7 +51,7 @@ using namespace ns3;
 
 NS_LOG_COMPONENT_DEFINE("classroom-wifi");
 
-// open for appending, write the header if the file is new
+// append, writing the header if the file is new
 std::ofstream
 OpenCsv(const std::string& path, const std::string& header)
 {
@@ -72,8 +60,7 @@ OpenCsv(const std::string& path, const std::string& header)
     {
         std::filesystem::create_directories(parent);
     }
-    // a file from an older version of this script has different columns. move it aside
-    // (e.g. runs.csv -> runs-old.csv) instead of mixing the two
+    // different columns: move the old file aside instead of mixing them
     if (std::filesystem::is_regular_file(path) && std::filesystem::file_size(path) > 0)
     {
         std::ifstream existing(path);
@@ -94,7 +81,7 @@ OpenCsv(const std::string& path, const std::string& header)
                       << '\n';
         }
     }
-    // only regular files get a header, so /dev/null works too
+    // only regular files get a header, so /dev/null works
     bool isNew = !std::filesystem::exists(path) || (std::filesystem::is_regular_file(path) &&
                                                      std::filesystem::file_size(path) == 0);
     std::ofstream file(path, std::ios::app);
@@ -114,30 +101,29 @@ main(int argc, char* argv[])
 {
     std::string standard{"ax"};
     std::string rateManager{"constant"};
-    bool ofdma{false};   // DL OFDMA, 802.11ax only
-    bool ulOfdma{false}; // also UL OFDMA
+    bool ofdma{false};
+    bool ulOfdma{false};
     std::string phyModel{"Yans"};
     Time accessReqInterval{"3ms"};
     bool udp{true};
     bool downlink{true};
     Time simulationTime{"10s"};
     std::string layout{"circle"};
-    double distance{1.0};    // meters, circle layout only
-    double farDistance{0.0}; // meters, 0 means no far student
-    // grid layout: a typical PH classroom (7 m x 9 m, 3 m ceiling, 8 x 7 = 56 seats)
-    double roomWidth{7.0};  // meters, x
-    double roomDepth{9.0};  // meters, y. the front of the room (teacher) is at y = 0
-    std::size_t rows{8};    // rows of seats, front to back
-    std::size_t cols{7};    // seats per row
-    double apZ{3.0};        // AP height (ceiling), meters
+    double distance{1.0};
+    double farDistance{0.0};
+    // grid layout: 7 m x 9 m room, 3 m ceiling, 8 x 7 = 56 seats
+    double roomWidth{7.0};
+    double roomDepth{9.0};
+    std::size_t rows{8};
+    std::size_t cols{7};
+    double apZ{3.0};
     bool rtsCts{false};
     std::size_t nStations{1};
-    double demand{0.0}; // Mbit/s per student, 0 means saturated
+    double demand{0.0};
     int mcs{5};
-    int channelWidth{20};  // MHz
-    int guardInterval{800}; // ns
-    uint32_t payloadSize =
-        700; // must fit in the max TX duration when transmitting at MCS 0 over an RU of 26 tones
+    int channelWidth{20};
+    int guardInterval{800};
+    uint32_t payloadSize{700}; // fits a 26-tone RU at MCS 0
     std::string csvPath{"results/runs.csv"};
     std::string perStudentCsvPath{"results/per-student.csv"};
 
@@ -240,7 +226,6 @@ main(int argc, char* argv[])
     }
     if (ofdma)
     {
-        // SpectrumWifiPhy is required for OFDMA
         phyModel = "Spectrum";
     }
     if (nStations < 1)
@@ -259,7 +244,7 @@ main(int argc, char* argv[])
     {
         NS_FATAL_ERROR("Invalid layout: " << layout << " (must be circle or grid)");
     }
-    // seats start 2 m from the front, the teacher's area
+    // teacher's area at the front
     const double frontClearance = 2.0;
     if (layout == "grid")
     {
@@ -279,7 +264,6 @@ main(int argc, char* argv[])
         }
     }
 
-    // e.g. VHT MCS 9 isn't allowed at 20 MHz with 1 stream
     auto getMode = [isAx](int m) { return isAx ? HePhy::GetHeMcs(m) : VhtPhy::GetVhtMcs(m); };
     const MHz_u width{static_cast<double>(channelWidth)};
     if (!getMode(mcs).IsAllowed(width, 1))
@@ -288,8 +272,7 @@ main(int argc, char* argv[])
                               << standard);
     }
 
-    // saturated load per student = PHY rate / nStations like the original. minstrel/ideal can go
-    // above --mcs, so use the highest MCS there so the channel stays saturated
+    // saturated load = PHY rate / nStations, at the top MCS if the rate manager can go above --mcs
     int loadMcs = mcs;
     if (rateManager != "constant")
     {
@@ -302,7 +285,6 @@ main(int argc, char* argv[])
     const uint64_t phyRate =
         isAx ? HePhy::GetDataRate(loadMcs, width, NanoSeconds(guardInterval), 1)
              : VhtPhy::GetDataRate(loadMcs, width, NanoSeconds(guardInterval), 1);
-    // with --demand every student asks for the same fixed rate
     const auto maxLoad =
         demand > 0 ? static_cast<uint64_t>(demand * 1e6) : phyRate / nStations;
 
@@ -311,24 +293,19 @@ main(int argc, char* argv[])
         Config::SetDefault("ns3::TcpSocket::SegmentSize", UintegerValue(payloadSize));
     }
 
-    // the AP's default queue disc (FqCoDel) hashes each flow into one of 1024 queues and serves the
-    // queues equally. with 40+ downlink flows two students often land in the same queue and each
-    // gets half a share. ns-3 only creates a queue when a flow first uses it, so using the full
-    // 32-bit hash range costs nothing and makes a collision very unlikely (about 1 in 3 million
-    // runs at 56 students)
+    // FqCoDel's default 1024 queues let two students share one (each gets half). queues are
+    // created lazily, so the full hash range is free
     Config::SetDefault("ns3::FqCoDelQueueDisc::Flows", UintegerValue(4294967295U));
 
     if (ofdma)
     {
-        // same as --dlAckType=AGGR-MU-BAR in the original example
         Config::SetDefault("ns3::WifiDefaultAckManager::DlMuAckSequenceType",
                            EnumValue(WifiAcknowledgment::DL_MU_AGGREGATE_TF));
     }
 
     if (rtsCts)
     {
-        // threshold 0 = every frame is bigger than it, so every frame gets RTS/CTS. the default
-        // (4692480 bytes) is never reached by our A-MPDUs
+        // threshold 0: every frame gets RTS/CTS
         Config::SetDefault("ns3::WifiRemoteStationManager::RtsCtsThreshold", UintegerValue(0));
     }
 
@@ -368,7 +345,6 @@ main(int argc, char* argv[])
         wifi.SetRemoteStationManager("ns3::IdealWifiManager");
     }
 
-    // Set guard interval (802.11ac only has 800 ns or short 400 ns)
     if (isAx)
     {
         wifi.ConfigHeOptions("GuardInterval", TimeValue(NanoSeconds(guardInterval)));
@@ -401,8 +377,7 @@ main(int argc, char* argv[])
 
         if (ofdma)
         {
-            // in uplink the AP has nothing to send, so without an access request interval it
-            // never gets the channel and never sends trigger frames
+            // in uplink the AP needs AccessReqInterval to get the channel for triggers
             mac.SetMultiUserScheduler("ns3::RrMultiUserScheduler",
                                       "EnableUlOfdma",
                                       BooleanValue(ulOfdma),
@@ -447,12 +422,10 @@ main(int argc, char* argv[])
     streamNumber += WifiHelper::AssignStreams(apDevice, streamNumber);
     streamNumber += WifiHelper::AssignStreams(staDevices, streamNumber);
 
-    // mobility
     Vector apPos;
     std::vector<Vector> staPos(nStations);
     if (layout == "circle")
     {
-        // AP at the origin, students in a circle around it at the same height
         apPos = Vector(0.0, 0.0, 0.0);
         for (std::size_t i = 0; i < nStations; i++)
         {
@@ -463,8 +436,7 @@ main(int argc, char* argv[])
     }
     else
     {
-        // AP on the ceiling at the center of the room. seats are spread evenly over the room
-        // behind the teacher's area, filled row by row from the front, at desk height
+        // AP on the ceiling at the center, seats filled front to back at desk height
         const double deskZ = 0.75;
         apPos = Vector(roomWidth / 2, roomDepth / 2, apZ);
         const double colSpacing = roomWidth / cols;
@@ -477,14 +449,14 @@ main(int argc, char* argv[])
                                frontClearance + (row + 0.5) * rowSpacing,
                                deskZ);
         }
-        // the far student is behind the AP, outside the room (e.g. in the hallway)
+        // far student is outside the room, e.g. the hallway
         if (farDistance > 0)
         {
             staPos[nStations - 1] = Vector(apPos.x, apPos.y + farDistance, deskZ);
         }
     }
 
-    // real 3D distance to the AP, this is what the propagation loss model uses
+    // 3D distance, as the loss model sees it
     std::vector<double> staDistances(nStations);
     for (std::size_t i = 0; i < nStations; i++)
     {
@@ -503,14 +475,12 @@ main(int argc, char* argv[])
     mobility.Install(wifiApNode);
     mobility.Install(wifiStaNodes);
 
-    /* static setup of association and BA agreements */
     auto apDev = DynamicCast<WifiNetDevice>(apDevice.Get(0));
     NS_ASSERT(apDev);
     WifiStaticSetupHelper::SetStaticAssociation(apDev, staDevices);
     WifiStaticSetupHelper::SetStaticBlockAck(apDev, staDevices, {0});
     auto clientAppStartTime = MilliSeconds(1);
 
-    /* Internet stack*/
     InternetStackHelper stack;
     stack.Install(wifiApNode);
     stack.Install(wifiStaNodes);
@@ -525,11 +495,9 @@ main(int argc, char* argv[])
     staNodeInterfaces = address.Assign(staDevices);
     apNodeInterface = address.Assign(apDevice);
 
-    /* static setup of ARP cache */
     NeighborCacheHelper nbCache;
     nbCache.PopulateNeighborCache();
 
-    /* Setting applications */
     ApplicationContainer serverApp;
     auto serverNodes = downlink ? std::ref(wifiStaNodes) : std::ref(wifiApNode);
     Ipv4InterfaceContainer serverInterfaces;
@@ -542,7 +510,6 @@ main(int argc, char* argv[])
 
     if (udp)
     {
-        // UDP flow
         uint16_t port = 9;
         UdpServerHelper server(port);
         serverApp = server.Install(serverNodes.get());
@@ -567,7 +534,6 @@ main(int argc, char* argv[])
     }
     else
     {
-        // TCP flow
         uint16_t port = 50000;
         Address localAddress(InetSocketAddress(Ipv4Address::GetAny(), port));
         PacketSinkHelper packetSinkHelper("ns3::TcpSocketFactory", localAddress);
@@ -599,10 +565,8 @@ main(int argc, char* argv[])
     FlowMonitorHelper flowHelper;
     Ptr<FlowMonitor> monitor = flowHelper.InstallAll();
 
-    // throughput is counted until the apps stop, same as before. after that the simulation keeps
-    // going for drainTime so the packets still in the queues either arrive or get dropped (the
-    // Wi-Fi queue drops anything older than 500 ms). otherwise they would count as lost and their
-    // delay would be missing
+    // throughput counts until the apps stop; the drain lets queued packets arrive or drop
+    // so delay and loss are complete
     const Time drainTime = Seconds(1);
     FlowMonitor::FlowStatsContainer statsAtStop;
     Simulator::Schedule(simulationTime + clientAppStartTime,
@@ -610,12 +574,11 @@ main(int argc, char* argv[])
     Simulator::Stop(simulationTime + clientAppStartTime + drainTime);
     Simulator::Run();
 
-    // FlowMonitor counts whole IP packets, so subtract the headers to get the same goodput the
-    // original printed (UDP: 20 + 8, TCP: 20 + 20 + 12 timestamp option)
+    // strip IP + UDP/TCP headers to get goodput
     auto classifier = DynamicCast<Ipv4FlowClassifier>(flowHelper.GetClassifier());
     const uint32_t headerBytes = udp ? 28 : 52;
     const Ipv4Address apAddress = apNodeInterface.GetAddress(0);
-    std::vector<double> perStudent(nStations, 0.0); // Mbit/s
+    std::vector<double> perStudent(nStations, 0.0);
     std::vector<double> delaySumMs(nStations, 0.0);
     std::vector<uint64_t> txPackets(nStations, 0);
     std::vector<uint64_t> rxPackets(nStations, 0);
@@ -639,7 +602,6 @@ main(int argc, char* argv[])
         }
     }
 
-    // delay and loss use the stats after the drain
     monitor->CheckForLostPackets();
     for (const auto& [flowId, stats] : monitor->GetFlowStats())
     {
@@ -653,8 +615,6 @@ main(int argc, char* argv[])
                          : (flow.sourceAddress == staAddress && flow.destinationAddress == apAddress);
             if (isThisStudent)
             {
-                // delay is from the sender's IP layer to the receiver's, so it includes the
-                // time waiting in the Wi-Fi queue
                 delaySumMs[i] += stats.delaySum.GetSeconds() * 1000;
                 txPackets[i] += stats.txPackets;
                 rxPackets[i] += stats.rxPackets;
@@ -664,9 +624,7 @@ main(int argc, char* argv[])
 
     Simulator::Destroy();
 
-    // per student: mean delay of the received packets, and loss = packets sent but never
-    // received. after the drain this is the same as FlowMonitor's lostPackets (checked). a
-    // student that received nothing has no delay (NaN)
+    // a student that received nothing has NaN delay
     const double nan = std::numeric_limits<double>::quiet_NaN();
     std::vector<double> delayMs(nStations, nan);
     std::vector<double> lossPct(nStations, 0.0);
@@ -694,12 +652,10 @@ main(int argc, char* argv[])
         maxThroughput = std::max(maxThroughput, x);
     }
     double mean = total / nStations;
-    // Jain's index: 1 = perfectly fair, 1/n = one student gets everything
+    // Jain's index: 1 = fair, 1/n = one student gets everything
     double jain = sumSquares > 0 ? (total * total) / (nStations * sumSquares) : 0;
-    // worst student vs best student, 1 = same throughput
     double minMaxRatio = maxThroughput > 0 ? minThroughput / maxThroughput : 0;
 
-    // delay averaged over the students that received something, worst = highest
     double delaySum = 0;
     std::size_t delayCount = 0;
     double worstDelay = nan;
@@ -719,7 +675,6 @@ main(int argc, char* argv[])
     }
     double meanDelay = delayCount > 0 ? delaySum / delayCount : nan;
     double meanLoss = lossSum / nStations;
-    // share of the demand each student actually got (only with --demand)
     double meanSatisfaction = demand > 0 ? mean / demand : 0;
     double minSatisfaction = demand > 0 ? minThroughput / demand : 0;
 
@@ -767,7 +722,7 @@ main(int argc, char* argv[])
                   << "Delivered / demand (worst student): " << minSatisfaction << std::endl;
     }
 
-    // new columns go at the end so older scripts that read by position still work
+    // add new columns at the end
     auto csv = OpenCsv(csvPath,
                        "standard,nStations,direction,rateManager,farDistance,totalMbps,meanMbps,"
                        "minMbps,jain,mcs,channelWidth,guardInterval,distance,udp,simulationTime,run,"
