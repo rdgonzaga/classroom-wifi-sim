@@ -2,7 +2,7 @@
 
 Date: November 6, 2026
 
-These are the results used in the paper. They replace the preliminary 2-second numbers in `first-runs.md`, `demand.md` and `ofdma.md`. Every setting was run 5 times for 10 seconds of simulated time on the classroom seat layout, after the FqCoDel fix (`TIMELINE.md` item 14). The raw data is in `results/final/`.
+These are the results used in the paper. They replace the preliminary 2-second numbers in `preliminary/first-runs.md`, `preliminary/demand.md` and `preliminary/ofdma.md`. Every setting was run 5 times for 10 seconds of simulated time on the classroom seat layout, after the FqCoDel fix (`TIMELINE.md` item 14). The raw data is in `results/final/`.
 
 ## Settings
 
@@ -22,7 +22,7 @@ These are the results used in the paper. They replace the preliminary 2-second n
 
 ## Definitions
 
-Same as `demand.md`, plus:
+Same as `preliminary/demand.md`, plus:
 
 | Term | Meaning |
 |---|---|
@@ -58,7 +58,7 @@ Largest number of students for which the worst student still received at least 9
 Observations:
 
 1. The delay limit is always reached at or after the throughput limit, so adding "worst delay below 150 ms" to the definition of usable does not change this table. At 5 Mbit/s the same holds.
-2. Compared with the 2-second runs in `demand.md`, Wi-Fi 6 uplink at 3 Mbit/s moved from 5 to 10 (worst student 0.987, lowest run 0.982), and Wi-Fi 6 DL OFDMA at 5 Mbit/s moved from 10 to 5 (0.933, lowest run 0.915). Both were close to 0.95 before. The other limits did not change.
+2. Compared with the 2-second runs in `preliminary/demand.md`, Wi-Fi 6 uplink at 3 Mbit/s moved from 5 to 10 (worst student 0.987, lowest run 0.982), and Wi-Fi 6 DL OFDMA at 5 Mbit/s moved from 10 to 5 (0.933, lowest run 0.915). Both were close to 0.95 before. The other limits did not change.
 3. Wi-Fi 6 serves 5 more students than Wi-Fi 5 in every case except uplink at 5 Mbit/s, where both serve only 5.
 4. The downlink limits are close to the saturated total throughput (Section 4) divided by the demand: 59.9 / 3 = 20 for Wi-Fi 6 and 45.3 / 3 = 15 for Wi-Fi 5.
 
@@ -242,7 +242,7 @@ Observations:
 
 1. From 5 to 50 students, total downlink throughput falls by 7.5% on Wi-Fi 6 (59.91 to 55.41) and 4.6% on Wi-Fi 5 (45.32 to 43.24). Uplink falls by 45% on both (48.73 to 26.89 and 36.91 to 20.27), because more students means more collisions.
 2. Wi-Fi 6 carries 32% more than Wi-Fi 5 in downlink at 5 students (59.91 / 45.32 = 1.32) and 28% to 33% more in uplink. OFDMA is off, so this comes from the PHY rate: HE-MCS 5 at 20 MHz and 800 ns GI is 68.8 Mbit/s, VHT-MCS 5 is 52 Mbit/s, a ratio of 1.32.
-3. DL OFDMA stays at 48.6 Mbit/s for every number of students, 81% of Wi-Fi 6 without OFDMA. This is the RU subcarrier loss explained in `ofdma.md` (192 of 234 data subcarriers, 82%).
+3. DL OFDMA stays at 48.6 Mbit/s for every number of students, 81% of Wi-Fi 6 without OFDMA. This is the RU subcarrier loss explained in `preliminary/ofdma.md` (192 of 234 data subcarriers, 82%).
 4. Downlink fairness stays at 1.0000 except Wi-Fi 5 at 10 students (Section 6). Uplink fairness falls to about 0.88 at 50 students, and the slowest student gets 13 to 14% of the fastest student's throughput.
 
 ## 5. One Far Student (Sub-question 2)
