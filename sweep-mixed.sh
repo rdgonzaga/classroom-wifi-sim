@@ -71,6 +71,8 @@ run_one() {
     local id
     id=$(echo "$args" | md5sum | cut -c1-12)
     mkdir -p "$OUT_DIR/$set/parts"
+    # resume: skip runs that already finished (an .err file means it was cut off)
+    [[ -f "$OUT_DIR/$set/parts/$id-runs.csv" && ! -f "$OUT_DIR/$set/parts/$id.err" ]] && return 0
     # binary directly: parallel "./ns3 run" calls would all re-check the build
     # shellcheck disable=SC2086
     "$BIN" $args $BASE --csv="$OUT_DIR/$set/parts/$id-runs.csv" \
