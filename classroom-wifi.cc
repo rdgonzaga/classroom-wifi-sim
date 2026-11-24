@@ -26,6 +26,7 @@
 #include "ns3/neighbor-cache-helper.h"
 #include "ns3/on-off-helper.h"
 #include "ns3/packet-sink-helper.h"
+#include "ns3/random-variable-stream.h"
 #include "ns3/rng-seed-manager.h"
 #include "ns3/spectrum-wifi-helper.h"
 #include "ns3/ssid.h"
@@ -38,6 +39,7 @@
 #include "ns3/yans-wifi-channel.h"
 #include "ns3/yans-wifi-helper.h"
 
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -126,6 +128,12 @@ main(int argc, char* argv[])
     uint32_t payloadSize{700}; // fits a 26-tone RU at MCS 0
     std::string csvPath{"results/runs.csv"};
     std::string perStudentCsvPath{"results/per-student.csv"};
+    std::string devices{"identical"};
+    double laptopProb{1.0};
+    int apStreams{0};
+    int staStreams{1};
+    double laptopDemand{3.0};
+    double phoneDemand{1.0};
 
     CommandLine cmd(__FILE__);
     cmd.AddValue("standard", "Wi-Fi standard: ax (Wi-Fi 6) or ac (Wi-Fi 5)", standard);
@@ -178,6 +186,23 @@ main(int argc, char* argv[])
     cmd.AddValue("payloadSize", "The application payload size in bytes", payloadSize);
     cmd.AddValue("csv", "CSV file to append the run summary to", csvPath);
     cmd.AddValue("perStudentCsv", "CSV file to append per-student throughput to", perStudentCsvPath);
+    cmd.AddValue("devices",
+                 "identical (one STA per student) or mixed (a 1x1 phone per student, plus a 2x2 "
+                 "laptop with probability --laptopProb)",
+                 devices);
+    cmd.AddValue("laptopProb", "Mixed devices: chance that a student also has a laptop", laptopProb);
+    cmd.AddValue("apStreams",
+                 "AP antennas / spatial streams. 0 = 1 for identical, 2 for mixed",
+                 apStreams);
+    cmd.AddValue("staStreams",
+                 "Identical devices: antennas / spatial streams per STA",
+                 staStreams);
+    cmd.AddValue("laptopDemand",
+                 "Mixed devices: offered load per laptop in Mbit/s (both 0 = saturated)",
+                 laptopDemand);
+    cmd.AddValue("phoneDemand",
+                 "Mixed devices: offered load per phone in Mbit/s (both 0 = saturated)",
+                 phoneDemand);
     cmd.Parse(argc, argv);
 
     if (standard != "ax" && standard != "ac")
@@ -244,6 +269,31 @@ main(int argc, char* argv[])
     {
         NS_FATAL_ERROR("Invalid layout: " << layout << " (must be circle or grid)");
     }
+    if (devices != "identical" && devices != "mixed")
+    {
+        NS_FATAL_ERROR("Invalid devices: " << devices << " (must be identical or mixed)");
+    }
+    const bool mixed = (devices == "mixed");
+    if (apStreams == 0)
+    {
+        apStreams = mixed ? 2 : 1;
+    }
+    if (apStreams < 1 || apStreams > 4 || staStreams < 1 || staStreams > 4)
+    {
+        NS_FATAL_ERROR("apStreams and staStreams must be 1-4");
+    }
+    if (laptopProb < 0 || laptopProb > 1)
+    {
+        NS_FATAL_ERROR("laptopProb must be between 0 and 1");
+    }
+    if (mixed && demand > 0)
+    {
+        NS_FATAL_ERROR("With --devices=mixed use --laptopDemand and --phoneDemand, not --demand");
+    }
+    if (mixed && (laptopDemand < 0 || phoneDemand < 0 || (laptopDemand > 0) != (phoneDemand > 0)))
+    {
+        NS_FATAL_ERROR("laptopDemand and phoneDemand must both be > 0, or both 0 (saturated)");
+    }
     // teacher's area at the front
     const double frontClearance = 2.0;
     if (layout == "grid")
@@ -266,27 +316,78 @@ main(int argc, char* argv[])
 
     auto getMode = [isAx](int m) { return isAx ? HePhy::GetHeMcs(m) : VhtPhy::GetVhtMcs(m); };
     const MHz_u width{static_cast<double>(channelWidth)};
-    if (!getMode(mcs).IsAllowed(width, 1))
+    for (int nss : {1, apStreams, staStreams})
     {
-        NS_FATAL_ERROR("MCS " << mcs << " is not allowed at " << channelWidth << " MHz for 802.11"
-                              << standard);
+        if (!getMode(mcs).IsAllowed(width, nss))
+        {
+            NS_FATAL_ERROR("MCS " << mcs << " is not allowed at " << channelWidth
+                                  << " MHz with " << nss << " streams for 802.11" << standard);
+        }
     }
 
-    // saturated load = PHY rate / nStations, at the top MCS if the rate manager can go above --mcs
+    // one entry per STA. identical: one per student. mixed: laptop (if drawn) then phone
+    struct Device
+    {
+        std::size_t student;
+        std::string type; // sta, laptop or phone
+        int streams;
+        double demand; // Mbit/s, 0 = saturated
+    };
+
+    std::vector<Device> devs;
+    if (!mixed)
+    {
+        for (std::size_t i = 0; i < nStations; i++)
+        {
+            devs.push_back({i, "sta", staStreams, demand});
+        }
+    }
+    else
+    {
+        // own stream, so the draw depends only on --RngSeed / --RngRun
+        auto laptopDraw = CreateObject<UniformRandomVariable>();
+        laptopDraw->SetStream(100);
+        for (std::size_t i = 0; i < nStations; i++)
+        {
+            if (laptopDraw->GetValue() < laptopProb)
+            {
+                devs.push_back({i, "laptop", 2, laptopDemand});
+            }
+            devs.push_back({i, "phone", 1, phoneDemand});
+        }
+    }
+    const std::size_t nDevices = devs.size();
+    std::size_t nLaptops = 0;
+    std::size_t nPhones = 0;
+    bool equalDemand = true;
+    for (const auto& d : devs)
+    {
+        nLaptops += (d.type == "laptop");
+        nPhones += (d.type == "phone");
+        equalDemand = equalDemand && (d.demand == devs[0].demand);
+    }
+    const bool fixedDemand = devs[0].demand > 0;
+
+    // saturated load = PHY rate at apStreams / nDevices, at the top MCS if the rate manager can
+    // go above --mcs
     int loadMcs = mcs;
     if (rateManager != "constant")
     {
         loadMcs = maxMcs;
-        while (!getMode(loadMcs).IsAllowed(width, 1))
+        while (!getMode(loadMcs).IsAllowed(width, apStreams))
         {
             loadMcs--;
         }
     }
     const uint64_t phyRate =
-        isAx ? HePhy::GetDataRate(loadMcs, width, NanoSeconds(guardInterval), 1)
-             : VhtPhy::GetDataRate(loadMcs, width, NanoSeconds(guardInterval), 1);
-    const auto maxLoad =
-        demand > 0 ? static_cast<uint64_t>(demand * 1e6) : phyRate / nStations;
+        isAx ? HePhy::GetDataRate(loadMcs, width, NanoSeconds(guardInterval), apStreams)
+             : VhtPhy::GetDataRate(loadMcs, width, NanoSeconds(guardInterval), apStreams);
+    std::vector<uint64_t> maxLoad(nDevices);
+    for (std::size_t i = 0; i < nDevices; i++)
+    {
+        maxLoad[i] =
+            devs[i].demand > 0 ? static_cast<uint64_t>(devs[i].demand * 1e6) : phyRate / nDevices;
+    }
 
     if (!udp)
     {
@@ -310,7 +411,7 @@ main(int argc, char* argv[])
     }
 
     NodeContainer wifiStaNodes;
-    wifiStaNodes.Create(nStations);
+    wifiStaNodes.Create(nDevices);
     NodeContainer wifiApNode;
     wifiApNode.Create(1);
 
@@ -356,6 +457,34 @@ main(int argc, char* argv[])
 
     Ssid ssid = Ssid("classroom-ap");
 
+    auto setStreams = [](WifiPhyHelper& phy, int n) {
+        phy.Set("Antennas", UintegerValue(n));
+        phy.Set("MaxSupportedTxSpatialStreams", UintegerValue(n));
+        phy.Set("MaxSupportedRxSpatialStreams", UintegerValue(n));
+    };
+    // all STAs alike: one Install, as before. otherwise one at a time with their own streams
+    auto installStas = [&](WifiPhyHelper& phy) {
+        bool sameStreams = true;
+        for (const auto& d : devs)
+        {
+            sameStreams = sameStreams && (d.streams == devs[0].streams);
+        }
+        if (sameStreams)
+        {
+            setStreams(phy, devs[0].streams);
+            staDevices = wifi.Install(phy, mac, wifiStaNodes);
+        }
+        else
+        {
+            for (std::size_t i = 0; i < nDevices; i++)
+            {
+                setStreams(phy, devs[i].streams);
+                staDevices.Add(wifi.Install(phy, mac, wifiStaNodes.Get(i)));
+            }
+        }
+        setStreams(phy, apStreams);
+    };
+
     if (phyModel == "Spectrum")
     {
         auto spectrumChannel = CreateObject<MultiModelSpectrumChannel>();
@@ -373,7 +502,7 @@ main(int argc, char* argv[])
                     "MpduBufferSize",
                     UintegerValue(64));
         phy.Set("ChannelSettings", StringValue(channelStr));
-        staDevices = wifi.Install(phy, mac, wifiStaNodes);
+        installStas(phy);
 
         if (ofdma)
         {
@@ -408,7 +537,7 @@ main(int argc, char* argv[])
                     "MpduBufferSize",
                     UintegerValue(64));
         phy.Set("ChannelSettings", StringValue(channelStr));
-        staDevices = wifi.Install(phy, mac, wifiStaNodes);
+        installStas(phy);
 
         mac.SetType("ns3::ApWifiMac",
                     "EnableBeaconJitter",
@@ -423,7 +552,7 @@ main(int argc, char* argv[])
     streamNumber += WifiHelper::AssignStreams(staDevices, streamNumber);
 
     Vector apPos;
-    std::vector<Vector> staPos(nStations);
+    std::vector<Vector> seatPos(nStations);
     if (layout == "circle")
     {
         apPos = Vector(0.0, 0.0, 0.0);
@@ -431,7 +560,7 @@ main(int argc, char* argv[])
         {
             double d = (farDistance > 0 && i == nStations - 1) ? farDistance : distance;
             double angle = 2 * M_PI * i / nStations;
-            staPos[i] = Vector(d * std::cos(angle), d * std::sin(angle), 0.0);
+            seatPos[i] = Vector(d * std::cos(angle), d * std::sin(angle), 0.0);
         }
     }
     else
@@ -445,20 +574,31 @@ main(int argc, char* argv[])
         {
             std::size_t row = i / cols;
             std::size_t col = i % cols;
-            staPos[i] = Vector((col + 0.5) * colSpacing,
+            seatPos[i] = Vector((col + 0.5) * colSpacing,
                                frontClearance + (row + 0.5) * rowSpacing,
                                deskZ);
         }
         // far student is outside the room, e.g. the hallway
         if (farDistance > 0)
         {
-            staPos[nStations - 1] = Vector(apPos.x, apPos.y + farDistance, deskZ);
+            seatPos[nStations - 1] = Vector(apPos.x, apPos.y + farDistance, deskZ);
+        }
+    }
+
+    // laptop (or the single STA) at the seat, phone 0.3 m beside it
+    std::vector<Vector> staPos(nDevices);
+    for (std::size_t i = 0; i < nDevices; i++)
+    {
+        staPos[i] = seatPos[devs[i].student];
+        if (devs[i].type == "phone")
+        {
+            staPos[i].x += 0.3;
         }
     }
 
     // 3D distance, as the loss model sees it
-    std::vector<double> staDistances(nStations);
-    for (std::size_t i = 0; i < nStations; i++)
+    std::vector<double> staDistances(nDevices);
+    for (std::size_t i = 0; i < nDevices; i++)
     {
         staDistances[i] = CalculateDistance(staPos[i], apPos);
     }
@@ -502,7 +642,7 @@ main(int argc, char* argv[])
     auto serverNodes = downlink ? std::ref(wifiStaNodes) : std::ref(wifiApNode);
     Ipv4InterfaceContainer serverInterfaces;
     NodeContainer clientNodes;
-    for (std::size_t i = 0; i < nStations; i++)
+    for (std::size_t i = 0; i < nDevices; i++)
     {
         serverInterfaces.Add(downlink ? staNodeInterfaces.Get(i) : apNodeInterface.Get(0));
         clientNodes.Add(downlink ? wifiApNode.Get(0) : wifiStaNodes.Get(i));
@@ -517,13 +657,12 @@ main(int argc, char* argv[])
 
         serverApp.Start(Seconds(0));
         serverApp.Stop(simulationTime + clientAppStartTime);
-        const auto packetInterval = payloadSize * 8.0 / maxLoad;
 
-        for (std::size_t i = 0; i < nStations; i++)
+        for (std::size_t i = 0; i < nDevices; i++)
         {
             UdpClientHelper client(serverInterfaces.GetAddress(i), port);
             client.SetAttribute("MaxPackets", UintegerValue(4294967295U));
-            client.SetAttribute("Interval", TimeValue(Seconds(packetInterval)));
+            client.SetAttribute("Interval", TimeValue(Seconds(payloadSize * 8.0 / maxLoad[i])));
             client.SetAttribute("PacketSize", UintegerValue(payloadSize));
             ApplicationContainer clientApp = client.Install(clientNodes.Get(i));
             streamNumber += client.AssignStreams(clientNodes.Get(i), streamNumber);
@@ -543,13 +682,13 @@ main(int argc, char* argv[])
         serverApp.Start(Seconds(0));
         serverApp.Stop(simulationTime + clientAppStartTime);
 
-        for (std::size_t i = 0; i < nStations; i++)
+        for (std::size_t i = 0; i < nDevices; i++)
         {
             OnOffHelper onoff("ns3::TcpSocketFactory", Ipv4Address::GetAny());
             onoff.SetAttribute("OnTime", StringValue("ns3::ConstantRandomVariable[Constant=1]"));
             onoff.SetAttribute("OffTime", StringValue("ns3::ConstantRandomVariable[Constant=0]"));
             onoff.SetAttribute("PacketSize", UintegerValue(payloadSize));
-            onoff.SetAttribute("DataRate", DataRateValue(maxLoad));
+            onoff.SetAttribute("DataRate", DataRateValue(maxLoad[i]));
             AddressValue remoteAddress(InetSocketAddress(serverInterfaces.GetAddress(i), port));
             onoff.SetAttribute("Remote", remoteAddress);
             ApplicationContainer clientApp = onoff.Install(clientNodes.Get(i));
@@ -578,15 +717,15 @@ main(int argc, char* argv[])
     auto classifier = DynamicCast<Ipv4FlowClassifier>(flowHelper.GetClassifier());
     const uint32_t headerBytes = udp ? 28 : 52;
     const Ipv4Address apAddress = apNodeInterface.GetAddress(0);
-    std::vector<double> perStudent(nStations, 0.0);
-    std::vector<double> delaySumMs(nStations, 0.0);
-    std::vector<uint64_t> txPackets(nStations, 0);
-    std::vector<uint64_t> rxPackets(nStations, 0);
+    std::vector<double> perStudent(nDevices, 0.0);
+    std::vector<double> delaySumMs(nDevices, 0.0);
+    std::vector<uint64_t> txPackets(nDevices, 0);
+    std::vector<uint64_t> rxPackets(nDevices, 0);
 
     for (const auto& [flowId, stats] : statsAtStop)
     {
         auto flow = classifier->FindFlow(flowId);
-        for (std::size_t i = 0; i < nStations; i++)
+        for (std::size_t i = 0; i < nDevices; i++)
         {
             auto staAddress = staNodeInterfaces.GetAddress(i);
             // data direction only, so TCP ACK flows are skipped
@@ -606,7 +745,7 @@ main(int argc, char* argv[])
     for (const auto& [flowId, stats] : monitor->GetFlowStats())
     {
         auto flow = classifier->FindFlow(flowId);
-        for (std::size_t i = 0; i < nStations; i++)
+        for (std::size_t i = 0; i < nDevices; i++)
         {
             auto staAddress = staNodeInterfaces.GetAddress(i);
             // data direction only, so TCP ACK flows are skipped
@@ -626,9 +765,9 @@ main(int argc, char* argv[])
 
     // a student that received nothing has NaN delay
     const double nan = std::numeric_limits<double>::quiet_NaN();
-    std::vector<double> delayMs(nStations, nan);
-    std::vector<double> lossPct(nStations, 0.0);
-    for (std::size_t i = 0; i < nStations; i++)
+    std::vector<double> delayMs(nDevices, nan);
+    std::vector<double> lossPct(nDevices, 0.0);
+    for (std::size_t i = 0; i < nDevices; i++)
     {
         if (rxPackets[i] > 0)
         {
@@ -651,16 +790,66 @@ main(int argc, char* argv[])
         minThroughput = std::min(minThroughput, x);
         maxThroughput = std::max(maxThroughput, x);
     }
-    double mean = total / nStations;
-    // Jain's index: 1 = fair, 1/n = one student gets everything
-    double jain = sumSquares > 0 ? (total * total) / (nStations * sumSquares) : 0;
+    double mean = total / nDevices;
+
+    // satisfaction = delivered / demand, per STA
+    std::vector<double> satisfaction(nDevices, 0.0);
+    double satTotal = 0;
+    double satSquares = 0;
+    double demandSum = 0;
+    double worstLaptopSat = nan;
+    double worstPhoneSat = nan;
+    for (std::size_t i = 0; i < nDevices; i++)
+    {
+        demandSum += devs[i].demand;
+        if (devs[i].demand > 0)
+        {
+            satisfaction[i] = perStudent[i] / devs[i].demand;
+        }
+        satTotal += satisfaction[i];
+        satSquares += satisfaction[i] * satisfaction[i];
+        double& worst = devs[i].type == "laptop" ? worstLaptopSat : worstPhoneSat;
+        if (fixedDemand && devs[i].type != "sta" && (std::isnan(worst) || satisfaction[i] < worst))
+        {
+            worst = satisfaction[i];
+        }
+    }
+    const double meanDemand = demandSum / nDevices;
+
+    // Jain within one device type on raw throughput. in saturated mixed runs the overall index
+    // drops because 2x2 laptops get ~2x a phone's rate, not because of unfair sharing
+    auto jainOf = [&](const std::string& type) {
+        double s = 0;
+        double sq = 0;
+        std::size_t n = 0;
+        for (std::size_t i = 0; i < nDevices; i++)
+        {
+            if (devs[i].type == type)
+            {
+                s += perStudent[i];
+                sq += perStudent[i] * perStudent[i];
+                n++;
+            }
+        }
+        return (n > 0 && sq > 0) ? (s * s) / (n * sq) : nan;
+    };
+    const double jainLaptops = jainOf("laptop");
+    const double jainPhones = jainOf("phone");
+
+    // Jain's index: 1 = fair, 1/n = one STA gets everything. with unequal demands it's taken
+    // on satisfaction (same value as on throughput when demands are equal)
+    double jain = sumSquares > 0 ? (total * total) / (nDevices * sumSquares) : 0;
+    if (!equalDemand)
+    {
+        jain = satSquares > 0 ? (satTotal * satTotal) / (nDevices * satSquares) : 0;
+    }
     double minMaxRatio = maxThroughput > 0 ? minThroughput / maxThroughput : 0;
 
     double delaySum = 0;
     std::size_t delayCount = 0;
     double worstDelay = nan;
     double lossSum = 0;
-    for (std::size_t i = 0; i < nStations; i++)
+    for (std::size_t i = 0; i < nDevices; i++)
     {
         lossSum += lossPct[i];
         if (!std::isnan(delayMs[i]))
@@ -674,23 +863,48 @@ main(int argc, char* argv[])
         }
     }
     double meanDelay = delayCount > 0 ? delaySum / delayCount : nan;
-    double meanLoss = lossSum / nStations;
-    double meanSatisfaction = demand > 0 ? mean / demand : 0;
-    double minSatisfaction = demand > 0 ? minThroughput / demand : 0;
+    double meanLoss = lossSum / nDevices;
+    double meanSatisfaction = 0;
+    double minSatisfaction = 0;
+    if (fixedDemand && equalDemand)
+    {
+        meanSatisfaction = mean / devs[0].demand;
+        minSatisfaction = minThroughput / devs[0].demand;
+    }
+    else if (fixedDemand)
+    {
+        meanSatisfaction = satTotal / nDevices;
+        minSatisfaction = *std::min_element(satisfaction.begin(), satisfaction.end());
+    }
 
     const std::string direction = downlink ? "downlink" : "uplink";
     const uint64_t run = RngSeedManager::GetRun();
     const std::string ofdmaStr = ulOfdma ? "dl+ul" : (ofdma ? "dl" : "off");
 
-    std::cout << "802.11" << standard << ", " << nStations << " students, " << direction
-              << ", rate manager: " << rateManager;
+    std::cout << "802.11" << standard << ", " << nStations << " students, ";
+    if (mixed)
+    {
+        std::cout << nDevices << " STAs (" << nLaptops << " laptops 2x2, " << nPhones
+                  << " phones 1x1), AP " << apStreams << "x" << apStreams << ", ";
+    }
+    else if (apStreams != 1 || staStreams != 1)
+    {
+        std::cout << "STAs " << staStreams << "x" << staStreams << ", AP " << apStreams << "x"
+                  << apStreams << ", ";
+    }
+    std::cout << direction << ", rate manager: " << rateManager;
     if (rateManager == "constant")
     {
         std::cout << " (MCS " << mcs << ")";
     }
     std::cout << ", " << channelWidth << " MHz, " << guardInterval << " ns GI, "
               << (udp ? "UDP" : "TCP") << ", OFDMA " << ofdmaStr << ", " << phyModel << ", ";
-    if (demand > 0)
+    if (mixed && fixedDemand)
+    {
+        std::cout << "demand " << laptopDemand << " (laptop) / " << phoneDemand
+                  << " (phone) Mbit/s, ";
+    }
+    else if (demand > 0)
     {
         std::cout << "demand " << demand << " Mbit/s, ";
     }
@@ -700,26 +914,50 @@ main(int argc, char* argv[])
     }
     std::cout << layout << " layout, " << (rtsCts ? "RTS/CTS on, " : "")
               << simulationTime.As(Time::S) << ", run " << run << '\n';
-    for (std::size_t i = 0; i < nStations; i++)
+    // sweep.sh drops lines starting with "  Student"
+    for (std::size_t i = 0; i < nDevices; i++)
     {
         std::ostringstream dist;
         dist << std::fixed << std::setprecision(2) << staDistances[i];
-        std::cout << "  Student " << i + 1 << " (" << dist.str() << " m): " << perStudent[i]
-                  << " Mbit/s, delay " << delayMs[i] << " ms, loss " << lossPct[i] << " %\n";
+        std::cout << "  Student " << devs[i].student + 1
+                  << (mixed ? " " + devs[i].type : std::string{}) << " (" << dist.str()
+                  << " m): " << perStudent[i] << " Mbit/s, delay " << delayMs[i] << " ms, loss "
+                  << lossPct[i] << " %\n";
     }
+    const std::string per = mixed ? "STA" : "student";
     std::cout << "Total throughput: " << total << " Mbit/s\n"
-              << "Mean per student: " << mean << " Mbit/s\n"
-              << "Min per student: " << minThroughput << " Mbit/s\n"
-              << "Max per student: " << maxThroughput << " Mbit/s\n"
-              << "Jain's fairness index: " << jain << '\n'
+              << "Mean per " << per << ": " << mean << " Mbit/s\n"
+              << "Min per " << per << ": " << minThroughput << " Mbit/s\n"
+              << "Max per " << per << ": " << maxThroughput << " Mbit/s\n"
+              << "Jain's fairness index: " << jain << (equalDemand ? "" : " (on delivered / demand)")
+              << '\n'
               << "Min / max ratio: " << minMaxRatio << '\n'
               << "Mean delay: " << meanDelay << " ms\n"
-              << "Worst student's delay: " << worstDelay << " ms\n"
+              << "Worst " << per << "'s delay: " << worstDelay << " ms\n"
               << "Mean loss: " << meanLoss << " %" << std::endl;
-    if (demand > 0)
+    if (fixedDemand)
     {
         std::cout << "Delivered / demand (mean): " << meanSatisfaction << '\n'
-                  << "Delivered / demand (worst student): " << minSatisfaction << std::endl;
+                  << "Delivered / demand (worst " << per << "): " << minSatisfaction << std::endl;
+        if (mixed)
+        {
+            std::cout << "Delivered / demand (worst laptop): " << worstLaptopSat << '\n'
+                      << "Delivered / demand (worst phone): " << worstPhoneSat << std::endl;
+        }
+    }
+    if (mixed)
+    {
+        // mean throughput per type, to show the 2x2 vs 1x1 gap
+        double laptopSum = 0;
+        double phoneSum = 0;
+        for (std::size_t i = 0; i < nDevices; i++)
+        {
+            (devs[i].type == "laptop" ? laptopSum : phoneSum) += perStudent[i];
+        }
+        std::cout << "Mean per laptop: " << (nLaptops ? laptopSum / nLaptops : nan) << " Mbit/s\n"
+                  << "Mean per phone: " << (nPhones ? phoneSum / nPhones : nan) << " Mbit/s\n"
+                  << "Jain's index, laptops only: " << jainLaptops << '\n'
+                  << "Jain's index, phones only: " << jainPhones << std::endl;
     }
 
     // add new columns at the end
@@ -727,26 +965,37 @@ main(int argc, char* argv[])
                        "standard,nStations,direction,rateManager,farDistance,totalMbps,meanMbps,"
                        "minMbps,jain,mcs,channelWidth,guardInterval,distance,udp,simulationTime,run,"
                        "ofdma,phyModel,demand,meanSatisfaction,minSatisfaction,layout,rtsCts,"
-                       "maxMbps,minMaxRatio,meanDelayMs,worstDelayMs,meanLossPct");
+                       "maxMbps,minMaxRatio,meanDelayMs,worstDelayMs,meanLossPct,devices,"
+                       "apStreams,staStreams,laptopProb,nDevices,laptops,phones,laptopDemand,"
+                       "phoneDemand,worstLaptopSatisfaction,worstPhoneSatisfaction,jainLaptops,"
+                       "jainPhones");
+    // demand: mean per-STA demand (= --demand for identical devices)
     csv << standard << ',' << nStations << ',' << direction << ',' << rateManager << ','
         << farDistance << ',' << total << ',' << mean << ',' << minThroughput << ',' << jain << ','
         << mcs << ',' << channelWidth << ',' << guardInterval << ',' << distance << ',' << udp << ','
         << simulationTime.GetSeconds() << ',' << run << ',' << ofdmaStr << ',' << phyModel << ','
-        << demand << ',' << meanSatisfaction << ',' << minSatisfaction << ',' << layout << ','
-        << rtsCts << ',' << maxThroughput << ',' << minMaxRatio << ',' << meanDelay << ','
-        << worstDelay << ',' << meanLoss << '\n';
+        << (mixed ? meanDemand : demand) << ',' << meanSatisfaction << ',' << minSatisfaction << ','
+        << layout << ',' << rtsCts << ',' << maxThroughput << ',' << minMaxRatio << ','
+        << meanDelay << ',' << worstDelay << ',' << meanLoss << ',' << devices << ',' << apStreams
+        << ',' << staStreams << ',' << laptopProb << ',' << nDevices << ',' << nLaptops << ','
+        << nPhones << ',' << (mixed ? laptopDemand : 0) << ',' << (mixed ? phoneDemand : 0) << ','
+        << worstLaptopSat << ',' << worstPhoneSat << ',' << jainLaptops << ',' << jainPhones
+        << '\n';
 
+    // one row per STA; student = STA number, studentId = whose device it is
     auto perStudentCsv = OpenCsv(perStudentCsvPath,
                                  "standard,nStations,direction,rateManager,farDistance,mcs,ofdma,"
                                  "run,student,studentDistance,throughputMbps,demand,satisfaction,"
-                                 "layout,delayMs,lossPct");
-    for (std::size_t i = 0; i < nStations; i++)
+                                 "layout,delayMs,lossPct,devices,studentId,deviceType,streams");
+    for (std::size_t i = 0; i < nDevices; i++)
     {
         perStudentCsv << standard << ',' << nStations << ',' << direction << ',' << rateManager
                       << ',' << farDistance << ',' << mcs << ',' << ofdmaStr << ',' << run << ','
-                      << i + 1 << ',' << staDistances[i] << ',' << perStudent[i] << ',' << demand
-                      << ',' << (demand > 0 ? perStudent[i] / demand : 0) << ',' << layout << ','
-                      << delayMs[i] << ',' << lossPct[i] << '\n';
+                      << i + 1 << ',' << staDistances[i] << ',' << perStudent[i] << ','
+                      << devs[i].demand << ',' << satisfaction[i] << ',' << layout << ','
+                      << delayMs[i] << ',' << lossPct[i] << ',' << devices << ','
+                      << devs[i].student + 1 << ',' << devs[i].type << ',' << devs[i].streams
+                      << '\n';
     }
     return 0;
 }
