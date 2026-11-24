@@ -717,47 +717,46 @@ main(int argc, char* argv[])
     auto classifier = DynamicCast<Ipv4FlowClassifier>(flowHelper.GetClassifier());
     const uint32_t headerBytes = udp ? 28 : 52;
     const Ipv4Address apAddress = apNodeInterface.GetAddress(0);
-    std::vector<double> perStudent(nDevices, 0.0);
+    std::vector<double> staMbps(nDevices, 0.0);
     std::vector<double> delaySumMs(nDevices, 0.0);
     std::vector<uint64_t> txPackets(nDevices, 0);
     std::vector<uint64_t> rxPackets(nDevices, 0);
 
-    for (const auto& [flowId, stats] : statsAtStop)
-    {
+    // which STA a flow carries data for; nDevices if none (data direction only, so TCP ACK
+    // flows are skipped)
+    auto deviceOf = [&](FlowId flowId) {
         auto flow = classifier->FindFlow(flowId);
         for (std::size_t i = 0; i < nDevices; i++)
         {
             auto staAddress = staNodeInterfaces.GetAddress(i);
-            // data direction only, so TCP ACK flows are skipped
-            bool isThisStudent =
-                downlink ? (flow.sourceAddress == apAddress && flow.destinationAddress == staAddress)
-                         : (flow.sourceAddress == staAddress && flow.destinationAddress == apAddress);
-            if (isThisStudent)
+            if (downlink ? (flow.sourceAddress == apAddress && flow.destinationAddress == staAddress)
+                         : (flow.sourceAddress == staAddress && flow.destinationAddress == apAddress))
             {
-                double goodBytes =
-                    static_cast<double>(stats.rxBytes) - stats.rxPackets * headerBytes;
-                perStudent[i] += goodBytes * 8 / simulationTime.GetMicroSeconds();
+                return i;
             }
+        }
+        return nDevices;
+    };
+
+    for (const auto& [flowId, stats] : statsAtStop)
+    {
+        std::size_t i = deviceOf(flowId);
+        if (i < nDevices)
+        {
+            double goodBytes = static_cast<double>(stats.rxBytes) - stats.rxPackets * headerBytes;
+            staMbps[i] += goodBytes * 8 / simulationTime.GetMicroSeconds();
         }
     }
 
     monitor->CheckForLostPackets();
     for (const auto& [flowId, stats] : monitor->GetFlowStats())
     {
-        auto flow = classifier->FindFlow(flowId);
-        for (std::size_t i = 0; i < nDevices; i++)
+        std::size_t i = deviceOf(flowId);
+        if (i < nDevices)
         {
-            auto staAddress = staNodeInterfaces.GetAddress(i);
-            // data direction only, so TCP ACK flows are skipped
-            bool isThisStudent =
-                downlink ? (flow.sourceAddress == apAddress && flow.destinationAddress == staAddress)
-                         : (flow.sourceAddress == staAddress && flow.destinationAddress == apAddress);
-            if (isThisStudent)
-            {
-                delaySumMs[i] += stats.delaySum.GetSeconds() * 1000;
-                txPackets[i] += stats.txPackets;
-                rxPackets[i] += stats.rxPackets;
-            }
+            delaySumMs[i] += stats.delaySum.GetSeconds() * 1000;
+            txPackets[i] += stats.txPackets;
+            rxPackets[i] += stats.rxPackets;
         }
     }
 
@@ -781,9 +780,9 @@ main(int argc, char* argv[])
 
     double total = 0;
     double sumSquares = 0;
-    double minThroughput = perStudent[0];
-    double maxThroughput = perStudent[0];
-    for (double x : perStudent)
+    double minThroughput = staMbps[0];
+    double maxThroughput = staMbps[0];
+    for (double x : staMbps)
     {
         total += x;
         sumSquares += x * x;
@@ -804,7 +803,7 @@ main(int argc, char* argv[])
         demandSum += devs[i].demand;
         if (devs[i].demand > 0)
         {
-            satisfaction[i] = perStudent[i] / devs[i].demand;
+            satisfaction[i] = staMbps[i] / devs[i].demand;
         }
         satTotal += satisfaction[i];
         satSquares += satisfaction[i] * satisfaction[i];
@@ -816,8 +815,8 @@ main(int argc, char* argv[])
     }
     const double meanDemand = demandSum / nDevices;
 
-    // Jain within one device type on raw throughput. in saturated mixed runs the overall index
-    // drops because 2x2 laptops get ~2x a phone's rate, not because of unfair sharing
+    // Jain within one device type on raw throughput, since the overall index mixes 2x2 laptops
+    // and 1x1 phones
     auto jainOf = [&](const std::string& type) {
         double s = 0;
         double sq = 0;
@@ -826,8 +825,8 @@ main(int argc, char* argv[])
         {
             if (devs[i].type == type)
             {
-                s += perStudent[i];
-                sq += perStudent[i] * perStudent[i];
+                s += staMbps[i];
+                sq += staMbps[i] * staMbps[i];
                 n++;
             }
         }
@@ -921,7 +920,7 @@ main(int argc, char* argv[])
         dist << std::fixed << std::setprecision(2) << staDistances[i];
         std::cout << "  Student " << devs[i].student + 1
                   << (mixed ? " " + devs[i].type : std::string{}) << " (" << dist.str()
-                  << " m): " << perStudent[i] << " Mbit/s, delay " << delayMs[i] << " ms, loss "
+                  << " m): " << staMbps[i] << " Mbit/s, delay " << delayMs[i] << " ms, loss "
                   << lossPct[i] << " %\n";
     }
     const std::string per = mixed ? "STA" : "student";
@@ -952,7 +951,7 @@ main(int argc, char* argv[])
         double phoneSum = 0;
         for (std::size_t i = 0; i < nDevices; i++)
         {
-            (devs[i].type == "laptop" ? laptopSum : phoneSum) += perStudent[i];
+            (devs[i].type == "laptop" ? laptopSum : phoneSum) += staMbps[i];
         }
         std::cout << "Mean per laptop: " << (nLaptops ? laptopSum / nLaptops : nan) << " Mbit/s\n"
                   << "Mean per phone: " << (nPhones ? phoneSum / nPhones : nan) << " Mbit/s\n"
@@ -991,7 +990,7 @@ main(int argc, char* argv[])
     {
         perStudentCsv << standard << ',' << nStations << ',' << direction << ',' << rateManager
                       << ',' << farDistance << ',' << mcs << ',' << ofdmaStr << ',' << run << ','
-                      << i + 1 << ',' << staDistances[i] << ',' << perStudent[i] << ','
+                      << i + 1 << ',' << staDistances[i] << ',' << staMbps[i] << ','
                       << devs[i].demand << ',' << satisfaction[i] << ',' << layout << ','
                       << delayMs[i] << ',' << lossPct[i] << ',' << devices << ','
                       << devs[i].student + 1 << ',' << devs[i].type << ',' << devs[i].streams
