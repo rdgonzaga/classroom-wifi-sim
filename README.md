@@ -75,6 +75,11 @@ Options:
 | `--ulOfdma` | `0` | `1` = UL OFDMA on too (ax only, needs `--guardInterval=1600` or `3200`) |
 | `--muSchedAccessReqInterval` | `3ms` | with UL OFDMA, how often the AP grabs the channel to send trigger frames |
 | `--phyModel` | `Yans` | `Yans` or `Spectrum`. OFDMA always uses Spectrum |
+| `--devices` | `identical` | `identical` (one STA per student) or `mixed` (every student has a 1x1 phone, plus a 2x2 laptop with probability `--laptopProb`) |
+| `--laptopProb` | `1` | mixed: chance a student also has a laptop, drawn per `--RngRun` |
+| `--laptopDemand` / `--phoneDemand` | `3` / `1` | mixed: Mbit/s per laptop / phone. Both `0` = saturated. `--demand` isn't used with `mixed` |
+| `--apStreams` | `0` | AP antennas and spatial streams. `0` = 1 for identical, 2 for mixed |
+| `--staStreams` | `1` | identical: antennas and spatial streams per STA (the 2x2 control uses `--apStreams=2 --staStreams=2`) |
 | `--simulationTime` | `10s` | simulated time |
 | `--csv` | `results/runs.csv` | summary row is appended here |
 | `--perStudentCsv` | `results/per-student.csv` | one row per student is appended here |
@@ -82,6 +87,8 @@ Options:
 Relative CSV paths are relative to where you run `./ns3` (so `~/ns-3/results/` by default). Pass full paths to write into this repo. If an existing CSV has different columns (from an older version of the script), it's renamed to `runs-old.csv` (or `per-student-old.csv`) and a new file is started.
 
 The per-student distance printed and written to the CSV is the real 3D distance to the AP. Delay is FlowMonitor's mean delay of the packets that arrived, from the sender's IP layer to the receiver's (so it includes queueing). A student that received nothing has `nan` delay. Loss is the share of sent packets that never arrived. Saturated runs always show high delay and loss because the queues are always full. Use `--demand` runs for delay.
+
+With `--devices=mixed` the laptop sits at the student's seat and the phone 0.3 m beside it, and every STA is its own line (`Student 3 laptop`, `Student 3 phone`) and CSV row (`studentId`, `deviceType`, `streams`). With unequal demands Jain's index is taken on delivered / demand. `jainLaptops` and `jainPhones` are Jain's index within each type on raw throughput. The rates use nss = min(sender, receiver) streams, so a laptop gets 2 streams from the 2x2 AP and a phone 1. Mixed devices don't work with `--ofdma=1`: ns-3.48 stops on an assertion (`WifiPhyStateHelper::SwitchFromRxEndOk`) when one DL MU PPDU has 1-stream and 2-stream users.
 
 For the far-student test, use `--rateManager=ideal` or `minstrel`. With a fixed MCS the far student can't drop to a slower rate. On the default channel model a student past about 50 m is out of range, and the whole network stalls.
 
@@ -99,11 +106,14 @@ Runs 5, 10, 20, 30, 40 and 50 students for both standards and both directions, p
 DEMAND=3 SIM_TIME=2s RUNS=3 STUDENTS="5 10 15 20 25 30 35 40 45 50" ./sweep.sh
 ```
 
+`sweep-mixed.sh` runs the device-mix sweeps (phones + laptops, 2x2 AP) and the identical 2x2 control, 14 runs in parallel (`JOBS`), into `results/final-mixed/<set>/`. `SETS` picks the sets (see the script). Failed runs are listed in `results/final-mixed/failed.txt`.
+
 ## Layout
 
 ```
 classroom-wifi.cc   simulation script (copy into ~/ns-3/scratch/ to run)
 sweep.sh            runs the main student-count sweep
+sweep-mixed.sh      runs the device-mix and 2x2 control sweeps in parallel
 results/            recorded results
 TIMELINE.md         what has been done so far, in order
 ```

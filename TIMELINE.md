@@ -54,9 +54,14 @@ What has been done so far, in order. Details are in `README.md` and `results/`.
     - Unchanged (2 s runs, as in `baseline.md`): 1 student 59.9284, 10 students 59.7212 (Jain 0.999944), 30 students 57.5652, 30 students uplink 29.0108 (Jain 0.751592), 20 students at 3 Mbit/s (worst 0.951067).
     - The baseline numbers are for 2 s. The script's default is 10 s, which gives slightly different values (10 students: 59.8914), so always pass `--simulationTime=2s` when comparing against `results/`.
 
+## November 24, 2026
+
+15. Added a phone + laptop device mix (option B). With `--devices=mixed` every student has a 1x1 phone (1 Mbit/s) and, with probability `--laptopProb`, a 2x2 laptop (3 Mbit/s) on a 2x2 AP. `--apStreams` and `--staStreams` set the antennas for the identical-device control (all 2x2). Option A (`results/final.md`) stays as the identical-device baseline.
+    - Unchanged: 10 identical-device settings (circle and grid, DL/UL, demand, OFDMA, far student with Ideal, TCP) give the same output and CSV columns as before, byte for byte. 1x1 STAs on a 2x2 AP also match (20 students at 3 Mbit/s: worst 0.951067).
+    - Laptops don't get twice a phone's throughput. In saturated downlink both get the same (7.89 vs 7.88 Mbit/s, 5 students): the AP serves STAs packet by packet, so laptops just finish in half the airtime and the total rises (78.8 vs about 59 Mbit/s with all 1x1). This is the same performance anomaly as the far student (`final.md` section 5).
+    - Mixed devices with DL OFDMA stop on an ns-3.48 assertion (`WifiPhyStateHelper::SwitchFromRxEndOk`) whenever one MU PPDU has 1-stream and 2-stream users, so the mixed sweeps leave OFDMA out. The 2x2 control keeps it.
+
 ## Next
 
-- Demo on Friday (November 6): short 2 s runs are enough.
-- Full 10 s sweep for the paper, saturated and with `--demand`.
-
-All results so far come from short 2 s test runs, not the final sweep.
+- Final demo Friday, November 27: short 2 s runs.
+- Device-mix and control sweeps (`sweep-mixed.sh`), summary in `results/final-mixed.md`.
